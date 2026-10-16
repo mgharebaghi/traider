@@ -77,13 +77,14 @@ class ExchangeClient:
                 f"Check SYMBOL / EXCHANGE_ID in .env"
             )
         self.market = self.trade_ex.market(self.symbol)
-        if self.data_ex.id == "lbank":
-            raise ValueError(
-                "LBank futures candles are not implemented in this adapter; "
-                "run diagnose_lbank.py and see README_LBANK_FA.md. No alternate exchange is selected."
-            )
         if not self.market.get("swap") or not self.market.get("linear") or self.market.get("settle") != "USDT":
             raise ValueError("Only linear USDT-settled perpetual markets are supported")
+        if self.data_ex.id == "lbank":
+            log.info(
+                "Using LBank kline endpoint (%s) for candle analysis alongside LBank swap ticker (%s).",
+                self.symbol.split(":")[0],
+                self.symbol,
+            )
         if not self.s.dry_run:
             self.validate_live_support()
         if self.data_ex is not self.trade_ex:
@@ -152,7 +153,14 @@ class ExchangeClient:
 
     # ----------------------------------------------------------- market data
     async def fetch_ohlcv(self, timeframe: str, limit: int) -> list[list[float]]:
-        return await self.data_ex.fetch_ohlcv(self.symbol, timeframe=timeframe, limit=limit)
+        if self.data_ex.id == "lbank" and ":" in self.symbol:
+            return await self.data_ex.fetch_ohlcv(self.symbol.split(":")[0], timeframe=timeframe, limit=limit)
+        try:
+            return await self.data_ex.fetch_ohlcv(self.symbol, timeframe=timeframe, limit=limit)
+        except Exception:
+            if ":" in self.symbol:
+                return await self.data_ex.fetch_ohlcv(self.symbol.split(":")[0], timeframe=timeframe, limit=limit)
+            raise
 
     async def fetch_ticker(self, source: str = "data") -> dict[str, float]:
         ex = self.data_ex if source == "data" else self.trade_ex
