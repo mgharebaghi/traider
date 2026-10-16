@@ -247,7 +247,17 @@ class TelegramBot:
         bal = info.get("balance")
         min_bal = info.get("min_balance", self.s.min_balance_to_trade)
         if bal is not None:
-            lines.append(f"💵 موجودی فیوچرز: <b>{usd(bal)}</b>")
+            if info["mode"] == "DRY":
+                lines.append(f"🧪 موجودی مجازی (شبیه‌ساز): <b>{usd(bal)}</b>")
+                real_bal = info.get("real_futures_balance")
+                if real_bal is not None:
+                    lines.append(f"🏦 موجودی واقعی صرافی (Futures): <b>{usd(real_bal)}</b>")
+                    if real_bal < min_bal:
+                        lines.append(
+                            f"🪫 <i>(کیف پول واقعی صرافی شما کمتر از {usd(min_bal)} است؛ برای ترید واقعی باید شارژ شود)</i>"
+                        )
+            else:
+                lines.append(f"💵 موجودی واقعی فیوچرز: <b>{usd(bal)}</b>")
             if bal < min_bal:
                 lines.append(
                     f"🪫 <b>هشدار: موجودی کافی برای ترید ندارید!</b> (حداقل مورد نیاز: <b>{usd(min_bal)}</b>)"
@@ -482,11 +492,12 @@ class TelegramBot:
     # ======================================================= notifications
     async def notify_startup(self, mode: str, balance: Optional[float], exchange: str, restored: Optional[str]) -> None:
         active_model = self.ai.active_model if self.ai else self.s.gemini_model
+        bal_label = "🧪 موجودی مجازی (شبیه‌ساز)" if mode == "DRY" else "💵 موجودی واقعی فیوچرز"
         text = (
             "🤖 <b>ربات اسکالپر روشن شد</b>\n\n"
             f"⚙️ حالت: <b>{mode_label(mode)}</b>\n"
             f"🏦 صرافی: <b>{esc(exchange)}</b> | نماد: <code>{esc(self.s.symbol)}</code>\n"
-            f"💵 موجودی فیوچرز: <b>{usd(balance) if balance is not None else 'نامشخص'}</b>\n"
+            f"{bal_label}: <b>{usd(balance) if balance is not None else 'نامشخص'}</b>\n"
             f"🧠 مدل: <code>{esc(active_model)}</code>"
         )
         if restored:

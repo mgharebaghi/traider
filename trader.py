@@ -872,6 +872,14 @@ class Trader:
             info["balance"] = bal
             if self.mode == "LIVE" and bal < self.s.min_balance_to_trade:
                 info["spot_balance"] = await self.client.fetch_spot_usdt()
+            elif self.mode == "DRY" and self.s.has_exchange_keys:
+                try:
+                    real_bal = await self.client.fetch_free_usdt()
+                    info["real_futures_balance"] = real_bal
+                    if real_bal < self.s.min_balance_to_trade:
+                        info["spot_balance"] = await self.client.fetch_spot_usdt()
+                except Exception:  # noqa: BLE001
+                    info["real_futures_balance"] = None
         except Exception as exc:  # noqa: BLE001
             info["balance"] = None
             info["balance_error"] = str(exc)
