@@ -187,8 +187,10 @@ class AIAgent:
         )
 
     # ----------------------------------------------------------- analyze
-    async def analyze(self, snap: MarketSnapshot, setup: Setup) -> Optional[TradeSignal]:
-        if not self.can_call(setup.key)[0]:
+    async def analyze(self, snap: MarketSnapshot, setup: Setup, force: bool = False) -> Optional[TradeSignal]:
+        if not force and not self.can_call(setup.key)[0]:
+            return None
+        if self.calls_today() >= self.s.ai_max_calls_per_day:
             return None
         config = types.GenerateContentConfig(
             system_instruction=self._system_instruction(),

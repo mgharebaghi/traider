@@ -249,7 +249,7 @@ class Trader:
         return True
 
     async def switch_mode(self, new_mode: str) -> tuple[bool, str, float]:
-        """Switches DRY <-> LIVE. Returns (ok, message, new_balance)."""
+        """Switches DRY <-> LIVE directly from Telegram without requiring .env edits."""
         new_mode = new_mode.upper()
         if new_mode not in ("DRY", "LIVE"):
             return False, "حالت نامعتبر است", 0.0
@@ -260,12 +260,9 @@ class Trader:
                 return True, "", await self.get_balance()
             spot_note = ""
             if new_mode == "LIVE":
-                if self.s.dry_run:
-                    return False, "ابتدا DRY_RUN=false را در .env تنظیم و ربات را مجدداً اجرا کنید.", 0.0
                 if not self.s.has_exchange_keys:
                     return False, "کلیدهای API صرافی در فایل .env تنظیم نشده‌اند.", 0.0
                 try:
-                    self.client.validate_live_support()
                     balance = await self.client.fetch_free_usdt()
                 except Exception as exc:  # noqa: BLE001
                     return False, f"اتصال به حساب صرافی ناموفق بود: {exc}", 0.0
@@ -273,7 +270,7 @@ class Trader:
                     spot = await self.client.fetch_spot_usdt()
                     if spot and spot > 0:
                         spot_note = (
-                            f"\n💡 در کیف پول اسپات (Spot) شما {spot:.2f}$ تتر وجود دارد؛ "
+                            f"💡 در کیف پول اسپات (Spot) شما {spot:.2f}$ تتر وجود دارد؛ "
                             "آن را به کیف پول Futures منتقل کنید."
                         )
             else:
@@ -866,23 +863,29 @@ class Trader:
 
     # ============================================================= status
     async def status_snapshot(self) -> dict[str, Any]:
-        info: dict[str, Any] = {"mode": self.mode, "paused": self.paused, "min_balance": self.s.min_balance_to_trade}
+        info: dict[str, Any] = {
+            "mode": self.mode,
+            "paused": self.paused,
+            "min_balance": self.s.min_balance_to_trade,
+            "virtual_balance": self.virtual_balance,
+            "starting_balance": self.s.starting_balance,
+        }
         try:
             bal = await self.get_balance()
             info["balance"] = bal
-            if self.mode == "LIVE" and bal < self.s.min_balance_to_trade:
-                info["spot_balance"] = await self.client.fetch_spot_usdt()
-            elif self.mode == "DRY" and self.s.has_exchange_keys:
-                try:
-                    real_bal = await self.client.fetch_free_usdt()
-                    info["real_futures_balance"] = real_bal
-                    if real_bal < self.s.min_balance_to_trade:
-                        info["spot_balance"] = await self.client.fetch_spot_usdt()
-                except Exception:  # noqa: BLE001
-                    info["real_futures_balance"] = None
         except Exception as exc:  # noqa: BLE001
             info["balance"] = None
             info["balance_error"] = str(exc)
+
+        if self.mode == "LIVE" or self.s.has_exchange_keys:
+            try:
+                real_bal = info["balance"] if self.mode == "LIVE" and info.get("balance") is not None else await self.client.fetch_free_usdt()
+                info["real_futures_balance"] = real_bal
+                info["spot_balance"] = await self.client.fetch_spot_usdt()
+            except Exception as exc:  # noqa: BLE001
+                info["real_futures_balance"] = None
+                info["real_balance_error"] = str(exc)
+
         pos = self.position
         price = None
         try:

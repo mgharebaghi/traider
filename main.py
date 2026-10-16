@@ -57,7 +57,7 @@ class Orchestrator:
         self.risk = RiskManager(settings, self.store, self.client)
         self.telegram = TelegramBot(settings, self.store)
         self.trader = Trader(settings, self.client, self.risk, self.store, self.analyzer, self.telegram)
-        self.telegram.attach(self.trader, self.risk, self.ai)
+        self.telegram.attach(self.trader, self.risk, self.ai, self.analyzer)
         self.stop_event = asyncio.Event()
         self._last_error_notify: dict[str, float] = {}
 
@@ -120,8 +120,10 @@ class Orchestrator:
             log.info("Setup %s found but Gemini skipped: %s", setup.key, why)
             return
         log.info("Setup %s -> consulting Gemini (%s)", setup.key, "; ".join(setup.reasons))
+        await self.telegram.notify_ai_checking(snap, setup, self.ai.active_model)
         signal_ = await self.ai.analyze(snap, setup)
         if signal_ is None:
+            await self.telegram.send("⚠️ پاسخ معتبری از جمینای دریافت نشد؛ اسکن در دور بعدی ادامه می‌یابد.")
             return
         if not signal_.is_trade or signal_.confidence < self.s.ai_min_confidence:
             await self.telegram.notify_ai_wait(signal_, setup.direction)

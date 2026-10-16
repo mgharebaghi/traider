@@ -112,8 +112,6 @@ class ExchangeClient:
             raise RuntimeError("Missing live exchange capabilities: " + ", ".join(missing))
 
     def _require_live(self) -> None:
-        if self.s.dry_run:
-            raise RuntimeError("Real order submission is disabled by DRY_RUN=true")
         self.validate_live_support()
 
     async def close(self) -> None:
@@ -184,6 +182,8 @@ class ExchangeClient:
                     free = (bal.get("free") or {}).get("USDT")
                 if free is not None:
                     return float(free)
+                if isinstance(bal, dict) and ("free" in bal or "info" in bal):
+                    return 0.0
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
         raise RuntimeError(f"Unable to fetch USDT balance: {last_exc}")
@@ -196,7 +196,11 @@ class ExchangeClient:
             free = usdt.get("free")
             if free is None:
                 free = (bal.get("free") or {}).get("USDT")
-            return float(free) if free is not None else None
+            if free is not None:
+                return float(free)
+            if isinstance(bal, dict) and ("free" in bal or "info" in bal):
+                return 0.0
+            return None
         except Exception:  # noqa: BLE001
             return None
 
