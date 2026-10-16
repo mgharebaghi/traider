@@ -1,0 +1,21 @@
+services:
+  scalper-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: btc-scalper-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/app/data
+    volumes:
+      - scalper_data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  scalper_data:
