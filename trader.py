@@ -162,6 +162,11 @@ class Trader:
         self.notifier = notifier
         self.lock = asyncio.Lock()
 
+        saved_key = store.get("exchange_api_key")
+        saved_sec = store.get("exchange_api_secret")
+        if saved_key and saved_sec and not settings.has_exchange_keys and hasattr(client, "set_credentials"):
+            client.set_credentials(str(saved_key), str(saved_sec))
+
         if store.get(MODE_KEY) is None:
             store.set(MODE_KEY, "DRY" if settings.dry_run else "LIVE")
         if store.get(VBAL_KEY) is None:
@@ -175,7 +180,7 @@ class Trader:
             if self.position is not None and self.position.mode == "LIVE":
                 raise ValueError("Saved LIVE position exists. Reconcile it with DRY_RUN=false before using simulation.")
             store.set(MODE_KEY, "DRY")
-        elif self.mode == "LIVE" and not settings.has_exchange_keys:
+        elif self.mode == "LIVE" and not self.has_exchange_keys:
             raise ValueError("Saved LIVE mode requires exchange credentials")
 
         self._trail_df: Optional[pd.DataFrame] = None
@@ -186,6 +191,18 @@ class Trader:
         self._low_balance_warned = False
 
     # =============================================================== state
+    @property
+    def has_exchange_keys(self) -> bool:
+        return bool(self.s.has_exchange_keys or getattr(self.client, "has_credentials", False))
+
+    def set_exchange_keys(self, api_key: str, api_secret: str) -> None:
+        api_key = api_key.strip().strip('"').strip("'")
+        api_secret = api_secret.strip().strip('"').strip("'")
+        self.store.set("exchange_api_key", api_key)
+        self.store.set("exchange_api_secret", api_secret)
+        if hasattr(self.client, "set_credentials"):
+            self.client.set_credentials(api_key, api_secret)
+
     @property
     def mode(self) -> str:
         return str(self.store.get(MODE_KEY, "DRY"))
@@ -260,8 +277,12 @@ class Trader:
                 return True, "", await self.get_balance()
             spot_note = ""
             if new_mode == "LIVE":
-                if not self.s.has_exchange_keys:
-                    return False, "کلیدهای API صرافی در فایل .env تنظیم نشده‌اند.", 0.0
+                if not self.has_exchange_keys:
+                    return (
+                        False,
+                        "کلیدهای API صرافی هنوز ثبت نشده‌اند. در تلگرام دستور:\n/setkeys API_KEY SECRET_KEY\nرا بفرستید!",
+                        0.0,
+                    )
                 try:
                     balance = await self.client.fetch_free_usdt()
                 except Exception as exc:  # noqa: BLE001
@@ -877,7 +898,7 @@ class Trader:
             info["balance"] = None
             info["balance_error"] = str(exc)
 
-        if self.mode == "LIVE" or self.s.has_exchange_keys:
+        if self.mode == "LIVE" or self.has_exchange_keys:
             try:
                 real_bal = info["balance"] if self.mode == "LIVE" and info.get("balance") is not None else await self.client.fetch_free_usdt()
                 info["real_futures_balance"] = real_bal

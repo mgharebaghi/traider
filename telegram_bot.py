@@ -139,6 +139,7 @@ class TelegramBot:
                 BotCommand("panic", "بستن فوری همه پوزیشن‌ها"),
                 BotCommand("history", "کارنامه و آخرین معاملات"),
                 BotCommand("resetdry", "تغییر یا ریست موجودی پول مجازی"),
+                BotCommand("setkeys", "ثبت کلید API صرافی از داخل تلگرام"),
                 BotCommand("help", "راهنما"),
             ]
         )
@@ -193,6 +194,7 @@ class TelegramBot:
         add(CommandHandler("panic", self.cmd_panic, filters=admin))
         add(CommandHandler("history", self.cmd_history, filters=admin))
         add(CommandHandler("resetdry", self.cmd_resetdry, filters=admin))
+        add(CommandHandler("setkeys", self.cmd_setkeys, filters=admin))
         add(MessageHandler(admin & filters.TEXT & ~filters.COMMAND, self.on_text))
         add(CallbackQueryHandler(self.on_callback))
         add(MessageHandler(~admin, self.on_unauthorized))
@@ -642,6 +644,27 @@ class TelegramBot:
             self.risk.roll_day(value)
             self.risk.clear_halt()
         await self._reply(update, f"♻️ موجودی کیف پول مجازی (شبیه‌ساز) به <b>{usd(value)}</b> تنظیم شد و آماده ترید است.")
+
+    async def cmd_setkeys(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        assert self.trader
+        if not context.args or len(context.args) < 2:
+            await self._reply(
+                update,
+                "🔑 <b>ثبت کلیدهای API صرافی از داخل تلگرام</b>\n\n"
+                "کلید API و Secret خود را با یک فاصله بعد از دستور بفرستید:\n"
+                "<code>/setkeys API_KEY SECRET_KEY</code>",
+            )
+            return
+        api_key, api_secret = context.args[0], context.args[1]
+        self.trader.set_exchange_keys(api_key, api_secret)
+        info = await self.trader.status_snapshot()
+        lines = [
+            "✅ <b>کلیدهای API صرافی با موفقیت در حافظه ربات ذخیره شد!</b>",
+            "",
+        ]
+        lines.extend(self._wallet_block(info))
+        lines.append("\nحالا می‌توانید با زدن دکمه «🔁 تغییر حالت» هر زمان خواستید بین پول مجازی و پول واقعی جابه‌جا شوید.")
+        await self._reply(update, "\n".join(lines))
 
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query

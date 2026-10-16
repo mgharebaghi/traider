@@ -68,6 +68,16 @@ class ExchangeClient:
             self.data_ex = _build_exchange(data_id, settings, with_keys=False)
         self.market: dict[str, Any] = {}
 
+    @property
+    def has_credentials(self) -> bool:
+        return bool(getattr(self.trade_ex, "apiKey", None) and getattr(self.trade_ex, "secret", None))
+
+    def set_credentials(self, api_key: str, api_secret: str, api_password: str = "") -> None:
+        self.trade_ex.apiKey = api_key.strip()
+        self.trade_ex.secret = api_secret.strip()
+        if api_password:
+            self.trade_ex.password = api_password.strip()
+
     # ------------------------------------------------------------------ init
     async def initialize(self) -> None:
         await self.trade_ex.load_markets()
