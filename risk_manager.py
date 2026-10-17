@@ -53,6 +53,7 @@ class DailyStats:
     consecutive_losses: int = 0
     target_hit: bool = False
     breaker_hit: bool = False
+    entries: int = 0
 
 
 class RiskManager:
@@ -63,6 +64,25 @@ class RiskManager:
         self.s = settings
         self.store = store
         self.client = client
+        self.activate_mode(str(store.get("mode", "DRY" if settings.dry_run else "LIVE")))
+
+    def activate_mode(self, mode: str) -> None:
+        legacy_mode = self.store.get("mode", "DRY" if self.s.dry_run else "LIVE")
+        for base in ("daily_stats", "halt"):
+            key = f"{base}_{mode}"
+            if mode == legacy_mode and self.store.get(key) is None:
+                legacy = self.store.get(base)
+                if legacy is not None:
+                    self.store.set(key, legacy)
+            self.store.delete(base)
+        self.DAILY_KEY = f"daily_stats_{mode}"
+        self.HALT_KEY = f"halt_{mode}"
+
+    def register_entry(self) -> None:
+        d = self.daily
+        if d:
+            d.entries = max(d.entries, d.trades) + 1
+            self._save_daily(d)
 
     # ================================================================ daily
     @staticmethod
@@ -127,10 +147,12 @@ class RiskManager:
     def can_trade(self) -> tuple[bool, str]:
         halt = self.halt_state()
         if halt:
-            return False, f"halted ({halt['reason']}) until {halt['until']}"
+            return False, f"توقف محافظ سرمایه تا {halt['until']}؛ زمان درج‌شده دارای منطقه زمانی است."
         d = self.daily
+        if d and max(d.entries, d.trades) >= self.s.max_trades_per_day:
+            return False, f"سقف {self.s.max_trades_per_day} ورود روزانه تکمیل شده؛ ورود بعدی روز جدید است."
         if d and d.target_hit:
-            return False, "daily target reached"
+            return False, "هدف سود روزانه ثبت شده؛ معامله تازه تا روز معاملاتی بعد انجام نمی‌شود."
         return True, ""
 
     # ============================================================ sizing
@@ -159,6 +181,10 @@ class RiskManager:
             return PositionPlan(False, "حد ضرر در سمت اشتباه است")
 
         risk_budget = balance * s.risk_per_trade_pct
+        if self.daily:
+            risk_budget = min(risk_budget, max(0, self.daily_loss_limit() + self.daily.realized_pnl))
+        if risk_budget <= 0:
+            return PositionPlan(False, "بودجه ضرر روزانه تمام شده است")
         # Conservative: assume taker fees on both legs + slippage on the stop fill.
         fee_in = s.taker_fee
         fee_out = s.taker_fee

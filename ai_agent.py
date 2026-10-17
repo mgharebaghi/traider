@@ -15,13 +15,14 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from enum import Enum
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from config import Settings
 from exchange_client import ExchangeClient
@@ -96,15 +97,9 @@ Return ONLY the JSON object matching the schema."""
 class AIAgent:
     USAGE_KEY = "ai_usage"
     MODEL_KEY = "gemini_model"
-    FALLBACK_MODELS = (
-        "gemini-3.8-flash",
-        "gemini-4-argon",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-2.5-flash",
-    )
 
     def __init__(self, settings: Settings, store: StateStore, client: ExchangeClient) -> None:
+        self._call_lock = asyncio.Lock()
         self.s = settings
         self.store = store
         self.client = client
@@ -122,6 +117,10 @@ class AIAgent:
     def set_model(self, model_name: str) -> str:
         model_name = model_name.strip()
         self.store.set(self.MODEL_KEY, model_name)
+        usage = self._usage()
+        if usage.get("failure_kind") == "access":
+            usage.update(blocked_until=0, last_error="", failure_kind="")
+            self.store.set(self.USAGE_KEY, usage)
         return model_name
 
     async def close(self) -> None:
@@ -130,10 +129,15 @@ class AIAgent:
 
     # ------------------------------------------------------------ budget
     def _usage(self) -> dict[str, Any]:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
         usage = self.store.get(self.USAGE_KEY) or {}
+        if usage and usage.get("budget_timezone") != "America/Los_Angeles":
+            # Carry the old UTC count forward once rather than granting a fresh
+            # budget on deployment inside the same Google quota day.
+            usage.update(date=today, budget_timezone="America/Los_Angeles")
+            self.store.set(self.USAGE_KEY, usage)
         if usage.get("date") != today:
-            usage = {"date": today, "count": 0, "last_call_ts": usage.get("last_call_ts", 0.0), "keys": []}
+            usage = {**usage, "date": today, "count": 0, "keys": [], "budget_timezone": "America/Los_Angeles"}
             self.store.set(self.USAGE_KEY, usage)
         return usage
 
@@ -142,14 +146,33 @@ class AIAgent:
 
     def can_call(self, setup_key: str) -> tuple[bool, str]:
         usage = self._usage()
+        if self.s.ai_quota_block_until and datetime.now(timezone.utc) < datetime.fromisoformat(self.s.ai_quota_block_until):
+            return False, f"سهمیه قبلاً تمام شده؛ درخواست تازه بعد از {self.s.ai_quota_block_until} مجاز است."
+        if time.time() < float(usage.get("blocked_until", 0)):
+            return False, "مکث محافظتی جمنای فعال است؛ بررسی وضعیت را بزنید و تا زمان اعلام‌شده صبر کنید."
         if usage["count"] >= self.s.ai_max_calls_per_day:
-            return False, "daily AI budget exhausted"
+            return False, "بودجه روزانه جمنای تمام شده؛ تمدید در نیمه‌شب Pacific است."
         elapsed = time.time() - float(usage.get("last_call_ts", 0.0))
-        if elapsed < self.s.ai_min_interval_sec:
-            return False, f"AI cooldown ({int(self.s.ai_min_interval_sec - elapsed)}s left)"
+        interval = max(60 / self.s.ai_requests_per_minute, self.s.ai_min_interval_sec)
+        if elapsed < interval:
+            return False, f"برای حفظ سهمیه جمنای {math.ceil(interval - elapsed)} ثانیه صبر کنید."
         if setup_key in usage.get("keys", []):
-            return False, "setup already evaluated"
+            return False, "این موقعیت قبلاً بررسی شده؛ منتظر موقعیت تازه هستیم."
         return True, ""
+
+    @property
+    def status_reason(self) -> str:
+        if self.s.ai_quota_block_until:
+            until_config = datetime.fromisoformat(self.s.ai_quota_block_until)
+            if datetime.now(timezone.utc) < until_config:
+                local = until_config.astimezone(ZoneInfo(self.s.display_timezone))
+                return f"سهمیه قبلاً مصرف شده؛ تحلیل جدید پس از {local:%Y-%m-%d %H:%M} ({self.s.display_timezone}) شروع می‌شود."
+        usage = self._usage()
+        reason = str(usage.get("last_error", ""))
+        until = float(usage.get("blocked_until", 0))
+        if until > time.time():
+            return f"{reason} | پایان مکث (Pacific): {datetime.fromtimestamp(until, ZoneInfo('America/Los_Angeles')).isoformat(timespec='minutes')}"
+        return reason
 
     def _register_call(self, setup_key: str) -> None:
         usage = self._usage()
@@ -188,63 +211,68 @@ class AIAgent:
 
     # ----------------------------------------------------------- analyze
     async def analyze(self, snap: MarketSnapshot, setup: Setup, force: bool = False) -> Optional[TradeSignal]:
-        if not force and not self.can_call(setup.key)[0]:
-            return None
-        if self.calls_today() >= self.s.ai_max_calls_per_day:
-            return None
-        config = types.GenerateContentConfig(
-            system_instruction=self._system_instruction(),
-            response_mime_type="application/json",
-            response_schema=GeminiSignal,
-            temperature=self.s.ai_temperature,
-        )
-        prompt = self._user_prompt(snap, setup)
-        last_exc: Optional[Exception] = None
-        candidates = [self.active_model] + [m for m in self.FALLBACK_MODELS if m != self.active_model]
-        model_idx = 0
-        for attempt in range(3):
-            # Count every HTTP attempt, including failed/retried requests.
-            if self.calls_today() >= self.s.ai_max_calls_per_day:
-                break
+        # Manual requests share exactly the same persistent budget as the scanner.
+        # Keep the lock through the HTTP response to prevent overlapping reservations.
+        if not hasattr(self, "_call_lock"):
+            self._call_lock = asyncio.Lock()
+        async with self._call_lock:
+            if not self.can_call(setup.key)[0]:
+                return None
+            prompt = self._user_prompt(snap, setup)
+            system = self._system_instruction()
+            # UTF-8 bytes provide a conservative upper bound for text input tokens,
+            # without a second countTokens API request. Reserve protocol overhead too.
+            tokens = len((system + prompt).encode("utf-8")) + 2048
+            usage = self._usage()
+            reservations = [r for r in usage.get("reservations", []) if r[0] > time.time() - 60]
+            if tokens + sum(r[1] for r in reservations) > self.s.ai_input_tokens_per_minute:
+                usage["last_error"] = "ورودی تحلیل از بودجه توکن دقیقه بیشتر است؛ تنظیم TPM را با AI Studio تطبیق دهید."
+                self.store.set(self.USAGE_KEY, usage)
+                return None
+            reservations.append([time.time(), tokens])
+            usage["reservations"] = reservations
+            self.store.set(self.USAGE_KEY, usage)
             self._register_call(setup.key)
-            model_name = candidates[min(model_idx, len(candidates) - 1)]
             try:
+                thinking = (types.ThinkingConfig(thinking_level="low")
+                            if self.active_model.startswith(("gemini-3", "gemini-4")) else None)
                 response = await self._genai.aio.models.generate_content(
-                    model=model_name, contents=prompt, config=config
+                    model=self.active_model, contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system, response_mime_type="application/json",
+                        response_schema=GeminiSignal, temperature=self.s.ai_temperature,
+                        max_output_tokens=self.s.ai_max_output_tokens,
+                        thinking_config=thinking,
+                    ),
                 )
-                text = (response.text or "").strip()
-                if not text:
-                    raise ValueError("Empty response from Gemini")
-                parsed = GeminiSignal.model_validate_json(text)
-                signal = self._normalise(parsed, snap, setup)
-                log.info(
-                    "Gemini (%s) -> %s conf=%s entry=%.1f sl=%.1f tp1=%.1f tp2=%.1f adj=%s",
-                    model_name,
-                    signal.action,
-                    signal.confidence,
-                    signal.entry_price,
-                    signal.stop_loss,
-                    signal.take_profit_1,
-                    signal.take_profit_2,
-                    signal.adjustments,
-                )
-                return signal
-            except (ValidationError, ValueError, json.JSONDecodeError) as exc:
-                last_exc = exc
-                log.warning("Invalid Gemini response (attempt %d): %s", attempt + 1, exc)
-            except Exception as exc:  # noqa: BLE001 - network / quota / model not found errors
-                last_exc = exc
-                err_str = str(exc).lower()
-                if any(k in err_str for k in ("not found", "404", "not supported", "invalid model")):
-                    model_idx += 1
-                    next_model = candidates[min(model_idx, len(candidates) - 1)]
-                    log.warning("Model %s unavailable (%s); falling back to %s", model_name, exc, next_model)
-                    continue
-                log.warning("Gemini API error on %s (attempt %d): %s", model_name, attempt + 1, exc)
-            if attempt < 2:
-                await asyncio.sleep(3 * (attempt + 1))
-        log.error("Gemini failed after retries: %s", last_exc)
-        return None
+                parsed = GeminiSignal.model_validate_json((response.text or "").strip())
+                result = self._normalise(parsed, snap, setup)
+                usage = self._usage()
+                usage["last_error"] = ""
+                self.store.set(self.USAGE_KEY, usage)
+                return result
+            except Exception as exc:
+                log.warning("Gemini analysis failed (%s): %s", self.active_model, exc)
+                error = str(exc).lower()
+                now = datetime.now(ZoneInfo("America/Los_Angeles"))
+                usage = self._usage()
+                if any(word in error for word in ("429", "resource_exhausted", "quota")):
+                    usage["failure_kind"] = "quota"
+                    # Unknown project quota: fail closed until Google's daily reset.
+                    until = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    usage["blocked_until"] = until.timestamp()
+                    message = "سهمیه پروژه جمنای پاسخ ۴۲۹ داد؛ تحلیل جدید تا تمدید روزانه متوقف شد. سقف‌های AI Studio را بررسی کنید."
+                elif any(word in error for word in ("404", "not found", "invalid model", "403", "401")):
+                    usage["failure_kind"] = "access"
+                    usage["blocked_until"] = time.time() + 86400
+                    message = "مدل یا دسترسی API معتبر نیست؛ نام مدل و مجوز پروژه را در AI Studio بررسی کنید."
+                else:
+                    usage["failure_kind"] = "transient"
+                    usage["blocked_until"] = time.time() + max(60, self.s.ai_min_interval_sec)
+                    message = "تحلیل معتبر دریافت نشد؛ ممکن است پاسخ ناقص یا اتصال دچار اختلال باشد. تلاش بعدی پس از مکث محافظتی انجام می‌شود."
+                usage["last_error"] = message
+                self.store.set(self.USAGE_KEY, usage)
+                return None
 
     # ------------------------------------------------------- validation
     def _normalise(self, g: GeminiSignal, snap: MarketSnapshot, setup: Setup) -> TradeSignal:

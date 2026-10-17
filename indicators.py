@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import pandas as pd
+import numpy as np
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator
 from ta.volatility import AverageTrueRange
@@ -233,6 +234,13 @@ class MarketAnalyzer:
         candles = ohlcv_to_df(raw)
         if len(candles) < max(self.s.ema_slow, self.s.atr_period, self.s.rsi_period) + 30:
             raise RuntimeError(f"Not enough raw candles for {timeframe}: {len(candles)}")
+        seconds = pd.to_timedelta(timeframe.replace("m", "min")).total_seconds()
+        age = (pd.Timestamp.now(tz="UTC") - candles["ts"].iloc[-1]).total_seconds()
+        if age > seconds * 2 + 60 or age < 0:
+            raise RuntimeError(f"Stale or future candles for {timeframe}; trading skipped")
+        values = candles[["open", "high", "low", "close", "volume"]]
+        if not np.isfinite(values.to_numpy()).all() or (values[["open", "high", "low", "close"]] <= 0).any().any():
+            raise RuntimeError("Invalid candle prices; trading skipped")
         df = add_indicators(candles, self.s)
         if len(df) < 30:
             raise RuntimeError(f"Not enough candles for {timeframe}: {len(df)}")

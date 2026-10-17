@@ -68,7 +68,14 @@ class Orchestrator:
         if now - self._last_error_notify.get(where, 0.0) < 600:
             return
         self._last_error_notify[where] = now
-        await self.telegram.send(f"⚠️ <b>خطا در {esc(where)}</b>\n<code>{esc(str(exc)[:500])}</code>\nربات به کار ادامه می‌دهد.")
+        label = "دریافت اطلاعات بازار" if where == "scanner" else "مدیریت معامله باز"
+        await self.telegram.send(
+            f"⚠️ <b>اختلال در {label}</b>\n"
+            "در این نوبت اطلاعات قابل‌اعتماد دریافت نشد. حلقه اجرا دوباره تلاش می‌کند؛ این پیام به معنی سالم بودن اتصال نیست.\n"
+            "اگر معامله واقعی باز دارید، وضعیت و حد ضرر آن را در صرافی بررسی کنید.\n"
+            f"شناسه خطا برای پشتیبانی: <code>{esc(type(exc).__name__)}</code>\n"
+            "جزئیات فنی در گزارش سرور: docker compose logs --tail=100"
+        )
 
     async def _sleep(self, seconds: float) -> None:
         try:
@@ -123,7 +130,7 @@ class Orchestrator:
         await self.telegram.notify_ai_checking(snap, setup, self.ai.active_model)
         signal_ = await self.ai.analyze(snap, setup)
         if signal_ is None:
-            await self.telegram.send("⚠️ پاسخ معتبری از جمینای دریافت نشد؛ اسکن در دور بعدی ادامه می‌یابد.")
+            await self.telegram.send(f"⏳ <b>معامله‌ای باز نشد</b>\n{esc(self.ai.status_reason or 'درخواست به دلیل محدودیت سهمیه یا بررسی هم‌زمان ارسال نشد.')}\nمدیریت معاملات باز ادامه دارد. جزئیات را در «وضعیت» ببینید.")
             return
         if not signal_.is_trade or signal_.confidence < self.s.ai_min_confidence:
             await self.telegram.notify_ai_wait(signal_, setup.direction)

@@ -61,7 +61,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.path = Path(self.temp.name)
-        self.s = settings_at(self.path)
+        self.s = settings_at(self.path, risk_per_trade_pct=0.04, min_leverage=10, max_leverage=35, max_margin_usage=0.9, daily_profit_target_pct=0.1, daily_max_loss_pct=0.08)
         self.store = StateStore(self.path / "state.db")
         self.client = FakeExchange()
         self.risk = RiskManager(self.s, self.store, self.client)
@@ -311,8 +311,8 @@ class AITests(unittest.IsolatedAsyncioTestCase):
             try:
                 with patch("ai_agent.asyncio.sleep", new_callable=AsyncMock):
                     self.assertIsNone(await agent.analyze(None, setup))
-                self.assertEqual(call.await_count, 2)
-                self.assertEqual(agent.calls_today(), 2)
+                self.assertEqual(call.await_count, 1)
+                self.assertEqual(agent.calls_today(), 1)
                 self.assertFalse(agent.can_call("other")[0])
             finally:
                 store.close()
