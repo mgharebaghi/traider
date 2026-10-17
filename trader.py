@@ -182,6 +182,7 @@ class Trader:
             store.set(MODE_KEY, "DRY")
         elif self.mode == "LIVE" and not self.has_exchange_keys:
             raise ValueError("Saved LIVE mode requires exchange credentials")
+        self.risk.activate_mode(self.mode)
 
         self._trail_df: Optional[pd.DataFrame] = None
         self._trail_ts = 0.0
@@ -277,6 +278,10 @@ class Trader:
                 return True, "", await self.get_balance()
             spot_note = ""
             if new_mode == "LIVE":
+                try:
+                    self.client.validate_live_support()
+                except Exception:
+                    return False, "اتصال فیوچرز این صرافی آماده نیست یا منبع قیمت با محل معامله فرق دارد. در LBank فعلاً از شبیه‌ساز استفاده کنید؛ راهنمای DEPLOY_FA.md را بخوانید.", 0.0
                 if not self.has_exchange_keys:
                     return (
                         False,
@@ -297,7 +302,7 @@ class Trader:
             else:
                 balance = self.virtual_balance
             self.store.set(MODE_KEY, new_mode)
-            self.store.delete(RiskManager.DAILY_KEY)
+            self.risk.activate_mode(new_mode)
             self.risk.roll_day(balance)
             self._low_balance_warned = False
             return True, spot_note, balance
@@ -480,6 +485,7 @@ class Trader:
         self, pos: Position, price: float, contracts: float, fee_override: Optional[float], maker: bool
     ) -> None:
         pos.status = "OPEN"
+        self.risk.register_entry()
         pos.fill_price = float(price)
         pos.contracts = float(contracts)
         pos.base_qty = pos.contracts * self.client.contract_size

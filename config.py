@@ -156,6 +156,11 @@ class Settings:
     log_level: str
     notify_ai_wait: bool
     display_timezone: str
+    ai_requests_per_minute: int = 1
+    ai_input_tokens_per_minute: int = 20000
+    ai_max_output_tokens: int = 4096
+    max_trades_per_day: int = 4
+    ai_quota_block_until: str = ""
 
     # ---------------- Derived helpers ----------------
     @property
@@ -196,7 +201,7 @@ def load_settings() -> Settings:
         gemini_api_key=_str("GEMINI_API_KEY"),
         gemini_model=_str("GEMINI_MODEL", "gemini-3.8-flash"),
         ai_min_confidence=_int("AI_MIN_CONFIDENCE", 70),
-        ai_max_calls_per_day=_int("AI_MAX_CALLS_PER_DAY", 45),
+        ai_max_calls_per_day=_int("AI_MAX_CALLS_PER_DAY", 18),
         ai_min_interval_sec=_int("AI_MIN_INTERVAL_SEC", 900),
         ai_temperature=_float("AI_TEMPERATURE", 0.2),
         telegram_token=_str("TELEGRAM_BOT_TOKEN"),
@@ -205,16 +210,16 @@ def load_settings() -> Settings:
         dry_run=_bool("DRY_RUN", True),
         starting_balance=_float("STARTING_BALANCE", 10.0),
         min_balance_to_trade=_float("MIN_BALANCE_TO_TRADE", 3.0),
-        risk_per_trade_pct=_float("RISK_PER_TRADE_PCT", 0.04),
+        risk_per_trade_pct=_float("RISK_PER_TRADE_PCT", 0.01),
         daily_profit_target_usd=_float("DAILY_PROFIT_TARGET_USD", 1.0),
-        daily_profit_target_pct=_float("DAILY_PROFIT_TARGET_PCT", 0.10),
+        daily_profit_target_pct=_float("DAILY_PROFIT_TARGET_PCT", 0.02),
         daily_max_loss_usd=_float("DAILY_MAX_LOSS_USD", 0.80),
-        daily_max_loss_pct=_float("DAILY_MAX_LOSS_PCT", 0.08),
+        daily_max_loss_pct=_float("DAILY_MAX_LOSS_PCT", 0.03),
         max_consecutive_losses=_int("MAX_CONSECUTIVE_LOSSES", 2),
         circuit_breaker_hours=_float("CIRCUIT_BREAKER_HOURS", 24),
-        min_leverage=_int("MIN_LEVERAGE", 10),
-        max_leverage=_int("MAX_LEVERAGE", 35),
-        max_margin_usage=_float("MAX_MARGIN_USAGE", 0.90),
+        min_leverage=_int("MIN_LEVERAGE", 2),
+        max_leverage=_int("MAX_LEVERAGE", 5),
+        max_margin_usage=_float("MAX_MARGIN_USAGE", 0.35),
         maintenance_margin_rate=_float("MAINTENANCE_MARGIN_RATE", 0.005),
         liquidation_buffer=_float("LIQUIDATION_BUFFER", 1.5),
         min_rr=_float("MIN_RR", 2.0),
@@ -252,6 +257,11 @@ def load_settings() -> Settings:
         log_level=_str("LOG_LEVEL", "INFO").upper(),
         notify_ai_wait=_bool("NOTIFY_AI_WAIT", True),
         display_timezone=_str("DISPLAY_TIMEZONE", "Asia/Tehran"),
+        ai_requests_per_minute=_int("AI_REQUESTS_PER_MINUTE", 1),
+        ai_input_tokens_per_minute=_int("AI_INPUT_TOKENS_PER_MINUTE", 20000),
+        ai_max_output_tokens=_int("AI_MAX_OUTPUT_TOKENS", 4096),
+        max_trades_per_day=_int("MAX_TRADES_PER_DAY", 4),
+        ai_quota_block_until=_str("AI_QUOTA_BLOCK_UNTIL"),
     )
     _validate(settings)
     return settings
@@ -259,10 +269,18 @@ def load_settings() -> Settings:
 
 def _validate(s: Settings) -> None:
     errors: list[str] = []
+    if s.ai_quota_block_until:
+        from datetime import datetime
+        try:
+            if datetime.fromisoformat(s.ai_quota_block_until).tzinfo is None:
+                raise ValueError("Timezone required")
+        except ValueError:
+            errors.append("AI_QUOTA_BLOCK_UNTIL must be an ISO timestamp with timezone")
     for name, value in vars(s).items():
         if isinstance(value, float) and not math.isfinite(value):
             errors.append(f"{name} must be finite")
     positive = (
+        "ai_requests_per_minute", "ai_input_tokens_per_minute", "ai_max_output_tokens", "max_trades_per_day",
         "starting_balance", "min_balance_to_trade", "max_consecutive_losses", "circuit_breaker_hours",
         "scan_interval_sec", "monitor_interval_sec", "trail_refresh_sec", "live_sync_sec",
         "entry_timeout_min", "ai_max_calls_per_day", "ema_fast", "ema_slow", "rsi_period", "atr_period",

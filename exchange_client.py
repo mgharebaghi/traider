@@ -12,6 +12,7 @@ works with a small, unified API.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Optional
 
 import ccxt.async_support as ccxt
@@ -61,7 +62,9 @@ class ExchangeClient:
         self.s = settings
         self.symbol = settings.symbol
         self.trade_ex = _build_exchange(settings.exchange_id, settings, with_keys=True)
-        data_id = settings.market_data_exchange_id or settings.exchange_id
+        # LBank's CCXT kline endpoint is broken and is a spot endpoint. Paper
+        # trading uses an explicitly disclosed public perpetual data feed instead.
+        data_id = settings.market_data_exchange_id or ("okx" if settings.dry_run and settings.exchange_id == "lbank" else settings.exchange_id)
         if data_id == settings.exchange_id:
             self.data_ex = self.trade_ex
         else:
@@ -90,17 +93,15 @@ class ExchangeClient:
         if not self.market.get("swap") or not self.market.get("linear") or self.market.get("settle") != "USDT":
             raise ValueError("Only linear USDT-settled perpetual markets are supported")
         if self.data_ex.id == "lbank":
-            log.info(
-                "Using LBank kline endpoint (%s) for candle analysis alongside LBank swap ticker (%s).",
-                self.symbol.split(":")[0],
-                self.symbol,
-            )
+            raise RuntimeError("LBank candle API is unavailable in CCXT. Set MARKET_DATA_EXCHANGE_ID=okx for paper trading; see DEPLOY_FA.md")
         if not self.s.dry_run:
             self.validate_live_support()
         if self.data_ex is not self.trade_ex:
             await self.data_ex.load_markets()
             if self.symbol not in self.data_ex.markets:
                 raise ValueError(f"Symbol {self.symbol} not found on data exchange {self.data_ex.id}")
+            if self.s.dry_run:
+                self.market = self.data_ex.market(self.symbol)
         log.info(
             "Exchange ready: trade=%s data=%s symbol=%s contractSize=%s minAmount=%s",
             self.trade_ex.id,
@@ -114,6 +115,8 @@ class ExchangeClient:
         # CCXT's LBank adapter currently routes create_order to spot endpoints.
         if self.trade_ex.id == "lbank":
             raise RuntimeError("LBank futures execution is not implemented in this adapter; see README_LBANK_FA.md")
+        if self.data_ex is not self.trade_ex:
+            raise RuntimeError("LIVE requires market data from the execution exchange; clear MARKET_DATA_EXCHANGE_ID")
         required = ("createOrder", "fetchOrder", "cancelOrder", "fetchBalance", "setLeverage", "setMarginMode")
         missing = [name for name in required if not self.trade_ex.has.get(name)]
         if not (self.trade_ex.has.get("fetchPositions") or self.trade_ex.has.get("fetchPosition")):
@@ -149,26 +152,21 @@ class ExchangeClient:
         if amount <= 0:
             return 0.0
         try:
-            return float(self.trade_ex.amount_to_precision(self.symbol, amount))
+            ex = self.data_ex if self.s.dry_run else self.trade_ex
+            return float(ex.amount_to_precision(self.symbol, amount))
         except Exception:  # noqa: BLE001 - amount below precision raises
             return 0.0
 
     def price_to_precision(self, price: float) -> float:
         try:
-            return float(self.trade_ex.price_to_precision(self.symbol, price))
+            ex = self.data_ex if self.s.dry_run else self.trade_ex
+            return float(ex.price_to_precision(self.symbol, price))
         except Exception:  # noqa: BLE001
             return float(price)
 
     # ----------------------------------------------------------- market data
     async def fetch_ohlcv(self, timeframe: str, limit: int) -> list[list[float]]:
-        if self.data_ex.id == "lbank" and ":" in self.symbol:
-            return await self.data_ex.fetch_ohlcv(self.symbol.split(":")[0], timeframe=timeframe, limit=limit)
-        try:
-            return await self.data_ex.fetch_ohlcv(self.symbol, timeframe=timeframe, limit=limit)
-        except Exception:
-            if ":" in self.symbol:
-                return await self.data_ex.fetch_ohlcv(self.symbol.split(":")[0], timeframe=timeframe, limit=limit)
-            raise
+        return await self.data_ex.fetch_ohlcv(self.symbol, timeframe=timeframe, limit=limit)
 
     async def fetch_ticker(self, source: str = "data") -> dict[str, float]:
         ex = self.data_ex if source == "data" else self.trade_ex
@@ -176,27 +174,28 @@ class ExchangeClient:
         last = float(t.get("last") or t.get("close") or 0.0)
         bid = float(t.get("bid") or last)
         ask = float(t.get("ask") or last)
-        if last <= 0:
-            raise RuntimeError("Ticker returned no price")
+        if not all(math.isfinite(v) and v > 0 for v in (last, bid, ask)) or bid > ask:
+            raise RuntimeError("Ticker returned invalid prices")
         return {"last": last, "bid": bid, "ask": ask}
 
     # --------------------------------------------------------------- account
     async def fetch_free_usdt(self) -> float:
-        last_exc: Optional[Exception] = None
-        for params in ({"type": "swap"}, {"type": "future"}, {}):
-            try:
-                bal = await self.trade_ex.fetch_balance(params)
-                usdt = bal.get("USDT") or {}
-                free = usdt.get("free")
-                if free is None:
-                    free = (bal.get("free") or {}).get("USDT")
-                if free is not None:
-                    return float(free)
-                if isinstance(bal, dict) and ("free" in bal or "info" in bal):
-                    return 0.0
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-        raise RuntimeError(f"Unable to fetch USDT balance: {last_exc}")
+        self.validate_live_support()
+        account_type = "future" if self.trade_ex.id in ("binance", "binanceusdm") else "swap"
+        try:
+            bal = await self.trade_ex.fetch_balance({"type": account_type})
+            usdt = bal.get("USDT") or {}
+            free = usdt.get("free")
+            if free is None:
+                free = (bal.get("free") or {}).get("USDT")
+            if free is None:
+                raise ValueError("No explicit free USDT futures balance returned")
+            value = float(free)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError("Invalid balance")
+            return value
+        except Exception as exc:
+            raise RuntimeError("Unable to fetch USDT futures balance; no spot fallback attempted") from exc
 
     async def fetch_spot_usdt(self) -> Optional[float]:
         """Checks Spot wallet USDT balance so we can tell the user if their funds are in Spot instead of Futures."""
@@ -208,8 +207,6 @@ class ExchangeClient:
                 free = (bal.get("free") or {}).get("USDT")
             if free is not None:
                 return float(free)
-            if isinstance(bal, dict) and ("free" in bal or "info" in bal):
-                return 0.0
             return None
         except Exception:  # noqa: BLE001
             return None

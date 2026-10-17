@@ -41,15 +41,30 @@ async def check_network(settings) -> None:
         ai.close()
 
 
+async def check_market(settings) -> None:
+    exchange = ExchangeClient(settings)
+    try:
+        await exchange.initialize()
+        snapshot = await MarketAnalyzer(exchange, settings).snapshot()
+        print(f"Public perpetual data: OK | source={exchange.data_ex.id} | last={snapshot.price}")
+        print(f"Closed candles: trend={len(snapshot.df15)} entry={len(snapshot.df1)}")
+        print("No account access, Telegram messages, Gemini generation or orders requested.")
+    finally:
+        await exchange.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--network", action="store_true", help="Check public market data, bot identity and model access")
+    parser.add_argument("--market-only", action="store_true", help="Check public perpetual candles and ticker only")
     args = parser.parse_args()
     if sys.platform.startswith("win"):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
         settings = check_config()
-        if args.network:
+        if args.market_only:
+            asyncio.run(check_market(settings))
+        elif args.network:
             asyncio.run(check_network(settings))
         else:
             print("Offline check passed. Use --network for read-only API checks.")

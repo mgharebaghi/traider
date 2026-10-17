@@ -132,7 +132,8 @@ class TelegramBot:
                 BotCommand("status", "وضعیت کامل کیف پول‌ها و پوزیشن"),
                 BotCommand("scan", "بررسی فوری بازار و استعلام جمینای"),
                 BotCommand("mode", "تغییر راحت بین پول مجازی و پول واقعی"),
-                BotCommand("guide", "راهنمای کامل ترید مجازی در LBank"),
+                BotCommand("guide", "راهنمای ساده معاملات آزمایشی"),
+                BotCommand("testdry", "آزمایش فنی سود و ضرر با قیمت نمونه"),
                 BotCommand("model", "انتخاب مدل هوش مصنوعی جمینای"),
                 BotCommand("pause", "توقف موقت اسکن بازار"),
                 BotCommand("resume", "ادامه اسکن بازار"),
@@ -187,6 +188,7 @@ class TelegramBot:
         add(CommandHandler("status", self.cmd_status, filters=admin))
         add(CommandHandler("scan", self.cmd_scan, filters=admin))
         add(CommandHandler("guide", self.cmd_guide, filters=admin))
+        add(CommandHandler("testdry", self.cmd_testdry, filters=admin))
         add(CommandHandler("mode", self.cmd_mode, filters=admin))
         add(CommandHandler("model", self.cmd_model, filters=admin))
         add(CommandHandler("pause", self.cmd_pause, filters=admin))
@@ -234,10 +236,11 @@ class TelegramBot:
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = (
-            "🤖 <b>ربات هوشمند اسکالپر فیوچرز بیت‌کوین (LBank + Gemini)</b>\n\n"
+            "🤖 <b>ربات هوشمند اسکالپر فیوچرز بیت‌کوین (Gemini + بازار فیوچرز)</b>\n\n"
             "از دکمه‌های پایین صفحه می‌توانید بدون نیاز به هیچ دستوری همه چیز را کنترل کنید:\n\n"
-            "📊 <b>وضعیت</b> (/status) — نمایش هم‌زمان <b>پول مجازی</b> و <b>پول واقعی در LBank</b> + وضعیت ترید باز\n"
-            "🔍 <b>بررسی فوری بازار</b> (/scan) — مشاهده تحلیل لحظه‌ای چارت LBank و استعلام فوری از جمینای\n"
+            "📊 <b>وضعیت</b> (/status) — موجودی حالت فعال، سود و ضرر و دلیل توقف ورود\n"
+            "🔍 <b>بررسی فوری بازار</b> (/scan) — تحلیل محلی قیمت زنده؛ دکمه استعلام جمنای سهمیه مصرف می‌کند\n"
+            "🧪 <b>آزمایش فنی</b> (/testdry) — مشاهده یک سود و یک ضرر با قیمت نمونه، جدا از حساب شما\n"
             "🔁 <b>تغییر حالت</b> (/mode) — سوئیچ راحت بین <b>پول مجازی (شبیه‌ساز)</b> و <b>پول واقعی صرافی</b> بدون دست زدن به سرور\n"
             "📘 <b>راهنمای ترید مجازی</b> (/guide) — توضیح کامل نحوه دیدن تریدهای مجازی و تغییر مبلغ شبیه‌ساز\n"
             "🧠 <b>مدل هوش مصنوعی</b> (/model) — تغییر مدل جمینای (3.8 / 4 / 3.6 / 2.5)\n"
@@ -260,23 +263,23 @@ class TelegramBot:
         active_tag_live = " 👈 <b>(فعال در حال حاضر)</b>" if mode == "LIVE" else ""
 
         lines = [
-            "💳 <b>وضعیت کیف پول‌ها (مجازی و واقعی در LBank):</b>",
+            "💳 <b>موجودی حساب‌ها</b>",
             f"• 🧪 <b>پول مجازی (شبیه‌ساز ربات):</b> <b>{usd(vbal)}</b>{active_tag_dry}",
         ]
         if real_fut is not None:
-            lines.append(f"• 🏦 <b>پول واقعی در LBank (حساب Futures):</b> <b>{usd(real_fut)}</b>{active_tag_live}")
+            lines.append(f"• 🏦 <b>پول واقعی در صرافی (حساب Futures):</b> <b>{usd(real_fut)}</b>{active_tag_live}")
             if real_spot is not None and real_spot != real_fut:
-                lines.append(f"• 🪙 <b>پول واقعی در LBank (حساب Spot):</b> <b>{usd(real_spot)}</b>")
+                lines.append(f"• 🪙 <b>پول واقعی در صرافی (حساب Spot):</b> <b>{usd(real_spot)}</b>")
             if real_fut < min_bal:
                 lines.append(
-                    f"  └ ℹ️ <i>موجودی واقعی شما در صرافی LBank الان <b>{usd(real_fut)}</b> است (برای ترید واقعی حداقل {usd(min_bal)} لازم است).</i>"
+                    f"  └ ℹ️ <i>موجودی واقعی شما در صرافی الان <b>{usd(real_fut)}</b> است (برای ترید واقعی حداقل {usd(min_bal)} لازم است).</i>"
                 )
         else:
             err = info.get("real_balance_error")
             if err:
-                lines.append(f"• 🏦 <b>پول واقعی در LBank:</b> <i>قابل دریافت نبود ({esc(err)[:80]})</i>")
+                lines.append("• 🏦 <b>موجودی واقعی:</b> قابل دریافت نیست؛ اتصال فیوچرز، مجوز API و پشتیبانی صرافی را بررسی کنید. این خطا به معنی صفر بودن موجودی نیست.")
             else:
-                lines.append("• 🏦 <b>پول واقعی در LBank:</b> <i>کلید API تنظیم نشده است</i>")
+                lines.append("• 🏦 <b>پول واقعی در صرافی:</b> <i>کلید API تنظیم نشده است</i>")
         return lines
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -296,7 +299,7 @@ class TelegramBot:
             lines.append(f"✅ وضعیت اسکن بازار: <b>فعال (بررسی خودکار هر {self.s.scan_interval_sec} ثانیه)</b>")
 
         if info.get("price"):
-            lines.append(f"₿ قیمت زنده بیت‌کوین در LBank: <b>{price_fmt(info['price'])} USDT</b>")
+            lines.append(f"₿ قیمت زنده بیت‌کوین در منبع قیمت فعال: <b>{price_fmt(info['price'])} USDT</b>")
 
         lines.append("")
         lines.extend(self._wallet_block(info))
@@ -314,7 +317,16 @@ class TelegramBot:
             lines.append(f"• سود/ضرر خالص امروز: <b>{usd(daily.realized_pnl, True)}</b>")
             lines.append(f"• هدف سود روزانه: {usd(self.risk.daily_target())} | سقف مجاز ضرر: {usd(self.risk.daily_loss_limit())}")
             lines.append(f"• تعداد معاملات امروز: {daily.trades} (✅ برد: {daily.wins} | ❌ باخت: {daily.losses} | ضرر متوالی: {daily.consecutive_losses})")
-        lines.append(f"🧠 استعلام‌های جمینای امروز: {self.ai.calls_today()} از {self.s.ai_max_calls_per_day}")
+        lines.append(f"🧠 درخواست‌های جمنای: {self.ai.calls_today()} از {self.s.ai_max_calls_per_day} (روز Pacific؛ شامل درخواست ناموفق)")
+        lines.append(f"⏱ فاصله تحلیل‌ها: حداقل {max(self.s.ai_min_interval_sec, 60 / self.s.ai_requests_per_minute):g} ثانیه؛ بررسی دستی هم مشمول محدودیت است.")
+        if self.ai.status_reason:
+            lines.append(f"ℹ️ وضعیت جمنای: {esc(self.ai.status_reason)}")
+        allowed, reason = self.risk.can_trade()
+        if not allowed:
+            lines.append(f"⛔ ورود جدید مجاز نیست: {esc(reason)}")
+        if daily:
+            lines.append(f"🎟 ورودهای امروز: {max(daily.entries, daily.trades)} از {self.s.max_trades_per_day}؛ تعداد معامله اجباری نیست.")
+        lines.append(f"📡 منبع کندل و قیمت: {esc(self.trader.client.data_ex.id)}")
         lines.append("")
         pos = info.get("position")
         if pos is None:
@@ -335,14 +347,14 @@ class TelegramBot:
     def _position_block(self, pos: "Position", unrealized: Optional[float], live_price: Optional[float] = None) -> str:
         stage_text = {
             0: "مرحله ۰: منتظر رسیدن به حد سود اول (TP1)",
-            1: "مرحله ۱: ۵۰٪ سود سیو شده + استاپ در نقطه ورود (ریسک‌فری) + تریلینگ فعال",
+            1: "مرحله ۱: بخشی از معامله بسته شده؛ حد ضرر به نزدیک ورود منتقل شده و همراه قیمت حرکت می‌کند",
             2: "مرحله ۲: عبور از TP2 + حد ضرر متحرک فشرده برای شکار سود حداکثری",
         }
         rows = [f"📌 <b>ترید فعال: {side_label(pos.side)}</b> — {mode_label(pos.mode)}"]
         if pos.status == "PENDING":
             rows.append(f"⏳ <b>وضعیت:</b> سفارش ورود ثبت شده و منتظر رسیدن قیمت به <b>{price_fmt(pos.entry_price)}</b> است")
             if live_price:
-                rows.append(f"• قیمت فعلی LBank: <b>{price_fmt(live_price)}</b>")
+                rows.append(f"• قیمت فعلی بازار: <b>{price_fmt(live_price)}</b>")
             rows.append(f"• حد ضرر (SL): {price_fmt(pos.stop_loss)} | TP1: {price_fmt(pos.tp1)} | TP2: {price_fmt(pos.tp2)}")
         else:
             rows.append("🟢 <b>وضعیت: پوزیشن باز و در حال معامله است!</b>")
@@ -377,7 +389,7 @@ class TelegramBot:
         res_str = price_fmt(snap.resistances[0].price) if snap.resistances else "—"
 
         lines = [
-            "🔍 <b>گزارش بررسی لحظه‌ای بازار (زنده از LBank)</b>",
+            "🔍 <b>گزارش بررسی لحظه‌ای بازار (زنده از منبع قیمت فعال)</b>",
             "",
             f"₿ <b>قیمت لحظه‌ای بیت‌کوین:</b> <b>{price_fmt(snap.price)} USDT</b>",
             f"⚙️ حالت فعال ربات: <b>{mode_label(self.trader.mode)}</b>",
@@ -441,7 +453,7 @@ class TelegramBot:
         if not self.analyzer:
             await self._reply(update, "ماژول تحلیلگر آماده نیست.")
             return
-        await self._reply(update, "🔍 در حال دریافت کندل‌های زنده از LBank و بررسی اندیکاتورها...")
+        await self._reply(update, "🔍 در حال دریافت کندل‌های زنده از منبع قیمت فعال و بررسی اندیکاتورها...")
         try:
             text, keyboard = await self._build_scan_report()
             await self._reply(update, text, keyboard)
@@ -452,22 +464,19 @@ class TelegramBot:
         assert self.trader
         vbal = self.trader.virtual_balance
         text = (
-            "📘 <b>راهنمای کامل ترید با پول مجازی (شبیه‌ساز) و پول واقعی در LBank</b>\n\n"
-            "<b>۱. چرا تریدهای پول مجازی داخل اپلیکیشن LBank دیده نمی‌شوند؟</b>\n"
-            "• در حالت <b>🧪 شبیه‌ساز (پول مجازی)</b>، قیمت‌های بیت‌کوین، کندل‌ها و اسپرد <b>به‌صورت ۱۰۰٪ زنده و واقعی از صرافی LBank</b> خوانده می‌شوند، اما چون پول مجازی (مثلاً ۱۰ دلار) داخل خودِ ربات شبیه‌سازی شده، سفارشی به حساب خالی شما در LBank ارسال نمی‌شود.\n"
-            "• بنابراین، <b>محل دیدن تمام تریدهای مجازی، همین ربات تلگرام است!</b>\n\n"
-            "<b>۲. چطور مراحل بررسی و ترید را لحظه‌به‌لحظه ببینم؟</b>\n"
-            "ربات تمام مراحل را با پیام‌های واضح در همین تلگرام به شما خبر می‌دهد:\n"
-            "1️⃣ <b>شروع بررسی هوش مصنوعی:</b> به محض اینکه چارت شرایط ورود پیدا کند، ربات پیام می‌دهد: <i>«🔍 شروع بررسی هوش مصنوعی... جواب تا ۵ الی ۱۰ ثانیه دیگر اعلام می‌شود»</i>.\n"
-            "2️⃣ <b>اعلام جواب بررسی:</b> بلافاصله بعد از پاسخ جمینای، نتیجه را می‌گوید (یا <b>⏸ صبر / عدم ورود</b> با ذکر دلیل، یا <b>🚀 تایید سیگنال و ثبت سفارش ورود</b> با قیمت ورود، حد ضرر و اهداف سود).\n"
-            "3️⃣ <b>شروع ترید:</b> به محض رسیدن قیمت LBank به نقطه ورود، پیام <i>«🟢 ترید رسماً شروع شد (پوزیشن باز است)»</i> ارسال می‌شود.\n"
-            "4️⃣ <b>مشاهده سود/ضرر در حین ترید:</b> در هر ثانیه که روی دکمه <b>📊 وضعیت</b> بزنید، قیمت زنده LBank و سود/ضرر لحظه‌ای ترید باز را می‌بینید.\n"
-            "5️⃣ <b>بسته شدن ترید:</b> وقتی قیمت به حد سود اول (ریسک‌فری)، حد سود دوم یا حد ضرر برسد، پیام بسته شدن ترید با محاسبه دقیق کارمزد و موجودی جدید کیف پول مجازی برایتان می‌آید!\n"
-            "6️⃣ <b>کارنامه کل تریدها:</b> با زدن دکمه <b>📜 تاریخچه</b>، لیست تمام تریدهای انجام‌شده، درصد برد (Win Rate) و سود خالص را می‌بینید.\n\n"
-            "<b>۳. چطور بدون دست زدن به سرور بین پول مجازی و پول واقعی سوئیچ کنم؟</b>\n"
-            "• کافیست روی دکمه <b>🔁 تغییر حالت</b> بزنید! در همان‌جا موجودی هر دو کیف پول (مجازی و واقعی LBank) را می‌بینید و با یک کلیک بین آن‌ها جابه‌جا می‌شوید.\n\n"
-            f"💵 <b>موجودی فعلی پول مجازی شما: {usd(vbal)}</b>\n"
-            "برای تغییر یا ریست کردن مبلغ پول مجازی، یکی از دکمه‌های زیر را بزنید (یا بنویسید <code>/resetdry 25</code>):"
+            "📘 <b>راهنمای ساده شروع آزمایشی</b>\n\n"
+            f"📡 منبع قیمت زنده: <b>{esc(self.trader.client.data_ex.id)}</b>؛ این قیمت لزوماً قیمت بازار نیست.\n"
+            f"💵 پول مجازی شما: <b>{usd(vbal)}</b>\n\n"
+            "۱️⃣ از «تغییر حالت» گزینه شبیه‌ساز را انتخاب کنید، سپس «ادامه» را بزنید.\n"
+            "۲️⃣ ربات بازار را بررسی می‌کند. فقط موقعیت مناسب به جمنای فرستاده می‌شود؛ خالی بودن تاریخچه به‌تنهایی خطا نیست.\n"
+            "۳️⃣ پیام «سفارش ورود» یعنی منتظر قیمت هستیم؛ «ورود انجام شد» یعنی معامله باز شده است. سفارش پرنشده پس از مهلت لغو می‌شود.\n"
+            "۴️⃣ در «وضعیت»، سود و ضرر لحظه‌ای را می‌بینید. حد ضرر برای محدود کردن زیان است و حد سود برای برداشت سود.\n"
+            "۵️⃣ با بسته شدن معامله، نتیجه پس از کارمزد، موجودی جدید و علت خروج ارسال و در «تاریخچه» ذخیره می‌شود. معاملات مجازی در اپ صرافی دیده نمی‌شوند.\n"
+            "۶️⃣ «توقف» فقط ورود جدید را متوقف می‌کند؛ مدیریت معامله باز ادامه دارد. «بستن اضطراری» معامله باز را می‌بندد.\n\n"
+            f"🎟 سقف ورود روزانه {self.s.max_trades_per_day} است؛ رسیدن به این تعداد یا سود تضمین نمی‌شود.\n"
+            "🧠 بررسی دستی هم از همان سهمیه جمنای مصرف می‌کند؛ زدن مکرر دکمه، تحلیل را سریع‌تر نمی‌کند.\n"
+            "⚠️ معامله واقعی فیوچرز LBank در این نسخه پشتیبانی نمی‌شود. برای صرافی دیگر، راهنمای DEPLOY_FA.md را بخوانید.\n"
+            "♻️ برای تنظیم پول مجازی: <code>/resetdry 25</code>؛ این فرمان آمار روز و قفل ریسک آزمایشی را هم پاک می‌کند."
         )
         keyboard = InlineKeyboardMarkup(
             [
@@ -485,6 +494,20 @@ class TelegramBot:
             ]
         )
         await self._reply(update, text, keyboard)
+
+    async def cmd_testdry(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from paper_check import run_paper_check
+        try:
+            results = await run_paper_check(self.s)
+            lines = ["✅ <b>آزمایش فنی شبیه‌ساز موفق بود</b>",
+                     "دو مسیر قیمت نمونه، جدا از موجودی و تاریخچه شما اجرا شد؛ این نتیجه پیش‌بینی بازار نیست."]
+            for item in results:
+                lines.append(f"• {side_label(item['side'])}: نتیجه خالص {usd(item['net_pnl'], True)}؛ کارمزد {usd(item['fees'])}؛ موجودی نهایی از ۱۰۰ دلار: {usd(item['balance'])}")
+            lines.append("هیچ درخواست جمنای یا سفارش واقعی ارسال نشد. برای معاملات آزمایشی با قیمت زنده، حالت شبیه‌ساز و سپس «ادامه» را انتخاب کنید.")
+            await self._reply(update, "\n".join(lines))
+        except Exception as exc:
+            log.exception("Paper engine check failed")
+            await self._reply(update, f"⚠️ آزمایش فنی موفق نبود ({esc(type(exc).__name__)}). گزارش سرور را بررسی کنید.")
 
     async def cmd_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         assert self.trader
@@ -508,7 +531,7 @@ class TelegramBot:
                 ],
                 [
                     InlineKeyboardButton(
-                        f"{'✅ ' if current == 'LIVE' else ''}💰 پول واقعی صرافی LBank ({usd(info['real_futures_balance']) if info.get('real_futures_balance') is not None else 'اتصال با کلید API'})",
+                        f"{'✅ ' if current == 'LIVE' else ''}💰 پول واقعی صرافی ({usd(info['real_futures_balance']) if info.get('real_futures_balance') is not None else 'اتصال با کلید API'})",
                         callback_data="mode:LIVE",
                     )
                 ],
@@ -544,7 +567,7 @@ class TelegramBot:
             update,
             f"🧠 مدل فعلی: <code>{esc(current)}</code>\n"
             "مدل مورد نظر را انتخاب کنید (یا بنویسید <code>/model نام_مدل</code>):\n"
-            "<i>نکته: اگر کلید شما هنوز به مدل انتخابی دسترسی نداشته باشد، ربات خودکار به مدل در دسترس بعدی سوییچ می‌کند.</i>",
+            "<i>نام مدل باید در پروژه AI Studio شما موجود باشد. سقف مصرف با تغییر مدل صفر نمی‌شود؛ در خطای دسترسی، تحلیل متوقف و علت در وضعیت اعلام می‌شود.</i>",
             keyboard,
         )
 
@@ -562,8 +585,8 @@ class TelegramBot:
         self.trader.set_paused(False)
         text = (
             f"▶️ <b>اسکن خودکار بازار فعال شد!</b>\n"
-            f"⏱ ربات هر <b>{self.s.scan_interval_sec} ثانیه</b> کندل‌های ۱ دقیقه و ۱۵ دقیقه بیت‌کوین در LBank را بررسی می‌کند.\n"
-            "• به محض پیدا شدن ستاپ تکنیکال، پیام <b>«🔍 شروع بررسی هوش مصنوعی»</b> برایتان می‌آید و ۵ تا ۱۰ ثانیه بعد نتیجه اعلام می‌شود."
+            f"⏱ ربات هر <b>{self.s.scan_interval_sec} ثانیه</b> کندل‌های ۱ دقیقه و ۱۵ دقیقه بیت‌کوین در منبع قیمت فعال را بررسی می‌کند.\n"
+            "• به محض پیدا شدن ستاپ تکنیکال، پیام <b>«🔍 شروع بررسی هوش مصنوعی»</b> برایتان می‌آید و پس از دریافت پاسخ، نتیجه اعلام می‌شود."
         )
         halt = self.risk.halt_state()
         if halt:
@@ -663,7 +686,7 @@ class TelegramBot:
             "",
         ]
         lines.extend(self._wallet_block(info))
-        lines.append("\nحالا می‌توانید با زدن دکمه «🔁 تغییر حالت» هر زمان خواستید بین پول مجازی و پول واقعی جابه‌جا شوید.")
+        lines.append("\nثبت کلید به معنی آماده بودن معامله واقعی نیست؛ آداپتور و مجوز فیوچرز باید پشتیبانی شود. LBank در این نسخه پشتیبانی نمی‌شود.")
         await self._reply(update, "\n".join(lines))
 
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -697,7 +720,7 @@ class TelegramBot:
                     ],
                     [
                         InlineKeyboardButton(
-                            f"{'✅ ' if current == 'LIVE' else ''}💰 پول واقعی صرافی LBank",
+                            f"{'✅ ' if current == 'LIVE' else ''}💰 پول واقعی صرافی",
                             callback_data="mode:LIVE",
                         )
                     ],
@@ -717,7 +740,7 @@ class TelegramBot:
             )
             await query.edit_message_text(
                 "⚠️ <b>تأیید تغییر به حالت واقعی (LIVE)</b>\n"
-                "در این حالت، ربات موجودی واقعی کیف پول LBank شما را بررسی کرده و با پول واقعی معامله می‌کند (اگر موجودی صرافی شما کمتر از ۳ دلار باشد، به شما هشدار می‌دهد و وارد معامله نمی‌شود).\n\n"
+                "این حالت فقط برای آداپتور فیوچرز پشتیبانی‌شده قابل استفاده است. LBank در این نسخه پشتیبانی نمی‌شود. پس از تأیید اتصال، سفارش با پول واقعی ثبت خواهد شد.\n\n"
                 "آیا ادامه می‌دهید؟",
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard,
@@ -730,7 +753,7 @@ class TelegramBot:
             if not self.analyzer:
                 await query.edit_message_text("ماژول تحلیلگر آماده نیست.")
                 return
-            await query.edit_message_text("🔍 در حال دریافت کندل‌های زنده از LBank و بروزرسانی تحلیل...")
+            await query.edit_message_text("🔍 در حال دریافت کندل‌های زنده از منبع قیمت فعال و بروزرسانی تحلیل...")
             try:
                 text, keyboard = await self._build_scan_report()
                 await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
@@ -778,8 +801,8 @@ class TelegramBot:
         await query.edit_message_text(
             f"🔍 <b>شروع بررسی هوش مصنوعی ({esc(self.ai.active_model)})</b>\n"
             f"🕒 ساعت شروع بررسی: <b>{now_str}</b>\n\n"
-            "⏳ در حال دریافت آخرین کندل‌های ۱ دقیقه و ۱۵ دقیقه از LBank و ارسال به جمینای...\n"
-            "<i>(جواب بررسی تا ۵ الی ۱۰ ثانیه دیگر روی همین پیام نمایش داده می‌شود)</i>",
+            "⏳ در حال دریافت آخرین کندل‌های ۱ دقیقه و ۱۵ دقیقه از منبع قیمت فعال و ارسال به جمینای...\n"
+            "<i>(دریافت پاسخ ممکن است حدود ۳۰ ثانیه زمان ببرد؛ نتیجه پس از دریافت روی همین پیام نمایش داده می‌شود)</i>",
             parse_mode=ParseMode.HTML,
         )
         try:
@@ -797,11 +820,15 @@ class TelegramBot:
                     ],
                     key=f"MANUAL:{int(datetime.now().timestamp())}",
                 )
-            signal = await self.ai.analyze(snap, setup, force=True)
+            allowed, reason = self.ai.can_call(setup.key)
+            if not allowed:
+                await query.edit_message_text(f"⏳ <b>درخواست ارسال نشد</b>\n{esc(reason)}", parse_mode=ParseMode.HTML)
+                return
+            signal = await self.ai.analyze(snap, setup)
             done_str = datetime.now(self.tz).strftime("%H:%M:%S")
             if signal is None:
                 await query.edit_message_text(
-                    "⚠️ پاسخ معتبری از جمینای دریافت نشد (یا سقف روزانه پر شده است).",
+                    f"⏳ معامله‌ای باز نشد.\n{esc(self.ai.status_reason or 'محدودیت مصرف یا بررسی هم‌زمان؛ کمی صبر کنید.')}",
                     parse_mode=ParseMode.HTML,
                 )
                 return
@@ -815,7 +842,7 @@ class TelegramBot:
                 "🧠 <b>جواب بررسی هوش مصنوعی جمینای دریافت شد!</b>",
                 f"🕒 ساعت اعلام جواب: <b>{done_str}</b> | مدل: <code>{esc(self.ai.active_model)}</code>",
                 "",
-                f"₿ قیمت لحظه‌ای LBank: <b>{price_fmt(snap.price)} USDT</b>",
+                f"₿ قیمت لحظه‌ای بازار: <b>{price_fmt(snap.price)} USDT</b>",
                 f"📣 <b>تصمیم جمینای: {verdict}</b>",
                 f"🎯 درجه اطمینان: <b>{signal.confidence}%</b> (حداقل لازم برای ترید: {self.s.ai_min_confidence}%)",
                 "",
@@ -902,6 +929,10 @@ class TelegramBot:
             f"⏱ دوره بررسی خودکار چارت: <b>هر {self.s.scan_interval_sec} ثانیه</b>",
             "",
         ]
+        lines.append(f"📡 منبع تحلیل و شبیه‌سازی: <b>{esc(self.trader.client.data_ex.id) if self.trader else '—'}</b>")
+        lines.append("🧪 در حالت آزمایشی، ورود و خروج با قیمت زنده شبیه‌سازی می‌شود؛ سود و ضرر پس از کارمزد در تاریخچه ثبت می‌شود.")
+        lines.append(f"🎟 حداکثر {self.s.max_trades_per_day} ورود در روز؛ ربات برای پر کردن تعداد، معامله نمی‌کند.")
+        lines.append("ℹ️ اجرای واقعی فیوچرز LBank در این نسخه آماده نیست. سود روزانه تضمینی نیست.")
         lines.extend(self._wallet_block(info))
         lines += [
             "",
@@ -919,7 +950,7 @@ class TelegramBot:
             f"🕒 ساعت شروع بررسی: <b>{now_str}</b>",
             "",
             f"📍 جهت تشخیص داده‌شده: <b>{side_label(setup.direction)}</b>",
-            f"₿ قیمت لحظه‌ای بیت‌کوین در LBank: <b>{price_fmt(snap.price)} USDT</b>",
+            f"₿ قیمت لحظه‌ای بیت‌کوین در منبع قیمت فعال: <b>{price_fmt(snap.price)} USDT</b>",
             "🔎 <b>دلایل تکنیکال:</b>",
         ]
         for r in setup.reasons:
@@ -927,7 +958,7 @@ class TelegramBot:
         lines += [
             "",
             f"🧠 در حال استعلام از مدل <code>{esc(model_name)}</code>...",
-            "⏳ <b>جواب بررسی تا ۵ الی ۱۰ ثانیه دیگر در پیام بعدی اعلام می‌شود.</b>",
+            "⏳ <b>دریافت پاسخ ممکن است حدود ۳۰ ثانیه زمان ببرد؛ نتیجه در پیام بعدی اعلام می‌شود.</b>",
         ]
         await self.send("\n".join(lines))
 
@@ -994,7 +1025,7 @@ class TelegramBot:
 
     async def notify_entry_filled(self, pos: "Position") -> None:
         now_str = datetime.now(self.tz).strftime("%H:%M:%S")
-        stop_mode = "نرم‌افزاری (در حال رصد لحظه‌ای قیمت LBank)" if pos.soft_stop else "ثبت‌شده روی صرافی"
+        stop_mode = "نرم‌افزاری (در حال رصد لحظه‌ای قیمت بازار)" if pos.soft_stop else "ثبت‌شده روی صرافی"
         await self.send(
             "🟢 <b>ترید رسماً شروع شد! (سفارش ورود پر شد و پوزیشن باز است)</b>\n"
             f"🕒 ساعت شروع ترید: <b>{now_str}</b>\n\n"
@@ -1004,7 +1035,7 @@ class TelegramBot:
             f"⛔ حد ضرر فعال (SL): <b>{price_fmt(pos.stop_loss)}</b> ({stop_mode})\n"
             f"✅ حد سود ۱ (TP1): <b>{price_fmt(pos.tp1)}</b>\n"
             f"🏆 حد سود ۲ (TP2): <b>{price_fmt(pos.tp2)}</b>\n\n"
-            "💡 <i>ربات هر ۳ ثانیه قیمت LBank را چک می‌کند. برای دیدن سود/ضرر لحظه‌ای در هر زمان روی «📊 وضعیت» بزنید.</i>"
+            "💡 <i>ربات هر ۳ ثانیه قیمت بازار را چک می‌کند. برای دیدن سود/ضرر لحظه‌ای در هر زمان روی «📊 وضعیت» بزنید.</i>"
         )
 
     async def notify_entry_cancelled(self, pos: "Position", reason: str) -> None:
@@ -1090,10 +1121,12 @@ class TelegramBot:
             f"💲 ورود: {price_fmt(pos.fill_price)} → خروج (میانگین): {price_fmt(pos.exit_price_avg)}",
             "",
             f"{'💰' if win else '🔻'} سود/ضرر خالص: <b>{usd(net, True)}</b> "
-            f"({pct_account:+.2f}% حساب | {roe:+.1f}% ROE)",
+            f"({pct_account:+.2f}% موجودی حساب | {roe:+.1f}% نسبت به پول درگیر معامله)",
             f"🧾 کارمزد پرداختی: {usd(pos.fees_paid)}",
             f"💵 موجودی جدید: <b>{usd(balance_after)}</b>",
         ]
+        if pos.mode == "DRY":
+            lines.append("🧪 این نتیجه مربوط به پول مجازی است؛ مبلغی به حساب صرافی اضافه یا از آن کم نشده است.")
         if daily:
             progress = (daily.realized_pnl / target * 100) if target > 0 else 0.0
             lines += [
