@@ -1,53 +1,65 @@
-> به‌روزرسانی ۱۷ اکتبر: شبیه‌سازی اکنون با منبع عمومی قرارداد OKX اجرا و بررسی شده است. محدودیت اجرای واقعی LBank همچنان برقرار است. راهنمای جاری: [DEPLOY_FA.md](DEPLOY_FA.md). توضیحات زیر درباره ناتمام بودن شبیه‌سازی مربوط به نسخه قبلی و منبع کندل خود LBank است.
+# بررسی اتصال واقعی LBank — ۱۷ اکتبر ۲۰۲۶
 
-# وضعیت و راه‌اندازی پروژه برای LBank
+**هدف، معامله واقعی فیوچرز با حد سود و ضرر ثبت‌شده روی صرافی است. این هدف هنوز تکمیل نشده است.** ابزار جدید `lbank_access_check.py` دسترسی حساب را بررسی می‌کند و هیچ قابلیت ثبت سفارش یا فعال‌سازی LIVE ندارد.
 
-هدف پروژه مطابق درخواست کاربر **LBank Futures** است. پیش‌فرض تنظیمات دوباره `EXCHANGE_ID=lbank` است و هیچ صرافی جایگزینی به‌صورت خودکار انتخاب نمی‌شود.
+## نتایج آزمون با کلید موجود در .env
 
-## چرا نسخه فعلی کامل اجرا نمی‌شود؟
+مقادیر کلید و Secret در خروجی یا این سند درج نشده‌اند. فقط درخواست‌های خواندنی به میزبان‌های رسمی ارسال شدند:
 
-در نسخه نصب‌شده CCXT، بازار و قیمت قرارداد LBank قابل دریافت‌اند، اما تابع کندل به مسیر Spot درخواست می‌دهد و تابع سفارش هم پیاده‌سازی سفارش نقدی است. بنابراین انتخاب نام `lbank` به‌تنهایی، اجرای فیوچرز را فراهم نمی‌کند. این محدودیت اتصال فعلی است، نه اثبات نبود API فیوچرز در خود LBank.
+| آزمون | نتیجه |
+| --- | --- |
+| استعلام امضاشده مجوز API | HTTP 200، کد صفر |
+| مجوز خواندن | فعال |
+| مجوز Futures | فعال |
+| مجوز Spot / برداشت / انتقال | غیرفعال |
+| محدودیت IP | فعال؛ IPهای مجاز در این آزمون خوانده نشدند |
+| زمان عمومی میزبان قراردادها | HTTP 200، success=true |
+| خواندن حساب قراردادها با GET امضاشده | HTTP 403، پاسخ HTML |
+| خواندن همان حساب با JSON POST امضاشده | HTTP 403، پاسخ HTML |
+| درخواست بدون کلید به همان مسیر حساب | HTTP 403، پاسخ HTML |
 
-راهنمای رسمی ساخت API، مجوز **Futures** را نام می‌برد. مستندات عمومی قراردادها نیز درباره احراز هویت و مجوز قرارداد توضیح می‌دهد؛ با این حال صفحه قابل دسترس فقط جزئیات چند مسیر عمومی بازار را دارد. مشخصات کامل درخواست/پاسخ کندل، موجودی فیوچرز، پوزیشن، سفارش، لغو، اهرم، مارجین ایزوله و حد ضرر در آن منتشر نشده است.
+این نتایج اعتبار امضای درخواست مجوز و فعال بودن پرچم فیوچرز را تأیید می‌کنند. پاسخ HTML 403 کد احراز هویت خود API نیست؛ علت آن از این آزمایش مشخص نمی‌شود. مجوز فیوچرز به‌تنهایی موفقیت اتصال معاملاتی را ثابت نمی‌کند. هیچ سفارش، لغو سفارش، انتقال وجه یا تغییر اهرم درخواست نشد.
 
-- [راهنمای رسمی ساخت API و گزینه Futures](https://support.lbank.com/hc/en-gb/articles/21535051026457-How-to-Create-and-Manage-Your-API-Web)
-- [مستندات رسمی قرارداد LBank](https://www.lbank.com/docs/contract.html)
-- [وضعیت اتصال LBank در CCXT](https://docs.ccxt.com/docs/comparisons/ccxt-vs-lbank-api)
+## یافته تازه در SDK
 
-**ثبت سفارش واقعی فیوچرز LBank هنوز پیاده‌سازی نشده است.** صرفاً برداشتن قفل اجرای LIVE این نقص را رفع نمی‌کند. استفاده از کندل Spot به‌جای کندل قرارداد هم در این پروژه به‌صورت خودکار انجام نمی‌شود.
+پکیج `lbank-connector-python` که از مخزن معرفی‌شده در مستندات رسمی منتشر شده، در توضیحات نسخه‌های قدیمی `1.0.12` و `1.0.13` نمونه ثبت قرارداد با مسیر `/cfd/openApi/v1/prv/placeOrder` دارد. در بررسی قبلی این نمونه پیدا نشده بود؛ وجود آن را اکنون ثبت و نتیجه قبلی را دقیق‌تر می‌کنیم: مسیر نمونه ورود وجود دارد، ولی آداپتور کامل و تأییدشده معامله فیوچرز هنوز در پروژه وجود ندارد.
 
-در آزمایش فقط‌خواندنی ۱۵ اکتبر ۲۰۲۶، دریافت مشخصات و قیمت واقعی `BTC/USDT:USDT` از LBank موفق بود؛ دریافت کندل با `BadSymbol` شکست خورد. پس از بازگرداندن پیش‌فرض LBank، هر ۲۵ تست آفلاین نیز موفق بودند. این تست‌ها به معنی پیاده‌سازی سفارش واقعی LBank نیستند.
+این نمونه، مشخصات کامل معنای مقادیر `offsetFlag`، `orderPriceType`، واحد حجم، خروج فقط‌کاهنده، تشخیص پرشدن، پوزیشن، لغو و TP/SL را ارائه نمی‌کند. توضیح امضای `/prv/account` نیز در مستندات قرارداد آمده، اما جدول کامل پارامترها و پاسخ آن موجود نیست. SDKهای رسمی Java، Go، Node و نسخه فعلی Python نیز برای مسیرهای لازم TP/SL مستندات کامل پیدا‌شده‌ای نداشتند. کد SDK دانلودشده نصب یا اجرا نشد؛ صرفاً منبع آن بررسی شد.
 
-## کاری که اکنون بدون هیچ کلیدی می‌توانید انجام دهید
+لینکی که از حساب My API ارائه شد، `https://www.lbank.com/docs/index.html#introduction` است. بخش سفارش آن Spot است؛ لینک Contract Trade API به همان سند عمومی قرارداد با مسیرهای بازار و توضیح امضا می‌رود.
 
-محیط مجازی همین پروژه نصب شده است. در PowerShell:
+منابع اولیه:
 
-```powershell
-Set-Location D:\MyProjects\Traider
-.\.venv\Scripts\python.exe diagnose_lbank.py
+- [مرجع رسمی API و لینک SDKها](https://www.lbank.com/docs/index.html#introduction)
+- [مرجع رسمی قراردادها](https://www.lbank.com/docs/contract.html)
+- [نمونه قدیمی ثبت قرارداد در نسخه 1.0.12](https://pypi.org/project/lbank-connector-python/1.0.12/)
+- [نمونه نسخه 1.0.13](https://pypi.org/project/lbank-connector-python/1.0.13/)
+- [مخزن معرفی‌شده در مرجع رسمی](https://github.com/LBank-exchange/lbank-connector-python)
+
+## اجرای آزمون روی همان سرور ربات
+
+پس از دریافت این نسخه و ساخت مجدد تصویر، در پوشه پروژه:
+
+```bash
+docker compose build
+# توقف یا شروع ربات برای این آزمون لازم نیست؛ ابزار وارد چرخه معاملات نمی‌شود.
+docker compose run --rm --no-deps scalper-agent python lbank_access_check.py --account-post
 ```
 
-این ابزار فقط از LBank داده عمومی می‌خواند؛ به توکن تلگرام، Gemini، API Key یا Secret نیاز ندارد و هیچ سفارشی ارسال نمی‌کند. کد خروج `2` یعنی داده عمومی بررسی شده اما اتصال معاملاتی آماده نیست؛ کد `1` یعنی بررسی عمومی هم خطا داشته است.
+در ترمینال کانتینر Coolify:
 
-برای نصب از ابتدا در سیستم دیگر:
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env
-.\.venv\Scripts\python.exe diagnose_lbank.py
+```bash
+python lbank_access_check.py --account-post
 ```
 
-اگر `.env` موجود است آن را جایگزین نکنید. تغییر تنظیمات به `DRY_RUN=false` محدودیت پیاده‌سازی را حل نمی‌کند. اجرای کامل شبیه‌سازی خودکار نیز به دریافت کندل معتبر قرارداد نیاز دارد و هنوز برای LBank تأیید نشده است.
+برای مقایسه GET، گزینه `--account-post` را حذف کنید. این ابزار فقط همان سه مسیر ثابت و خواندنی را فراخوانی می‌کند؛ آدرس دلخواه، سفارش یا انتقال نمی‌پذیرد. توکن تلگرام یا کلید جمنای لازم نیست. کلید صرافی از `.env` یا متغیرهای محیطی سرویس خوانده می‌شود؛ در خروجی چاپ نمی‌شود و دنبال‌کردن redirect غیرفعال است. کد خروج ۲ عمدی است: حتی موفقیت آزمون خواندن، تأیید آمادگی LIVE محسوب نمی‌شود.
 
-## برای تکمیل دقیقاً چه چیزی لازم است؟
+اگر روی سرور هم پاسخ حساب 403 بود، خروجی مجوزها و وضعیت HTTP را به پشتیبانی LBank بدهید؛ Secret یا کلید کامل را ارسال نکنید. محدودیت IP را با IP خروجی سرور تطبیق دهید؛ برای آزمایش آن را عمومی نکنید. اگر روی سرور پاسخ حساب موفق بود، هنوز باید مشخصات کامل سفارش و محافظ‌های آن دریافت و تست شود.
 
-مستندات معتبر API فیوچرز باید مسیرها، پارامترها، واحد حجم، کد وضعیت سفارش، احراز هویت و رفتار بستن پوزیشن را مشخص کند. داشتن API Key نقدی به‌تنهایی این اطلاعات را فراهم نمی‌کند. در این مرحله نیازی به ارسال کلید یا اطلاعات محرمانه نیست.
+## اطلاعات لازم از پشتیبانی
 
-متن آماده برای دریافت اطلاعات از پشتیبانی رسمی LBank، در صورت نیاز:
+متن آماده زیر برای هیچ‌کس ارسال نشده است:
 
-> Hello. I am implementing a Python bot for LBank USDT perpetual futures using official API credentials. Your public contract documentation lists market endpoints, but does not list the complete trading endpoints. Please provide the current official Futures REST/WebSocket API specification, including historical 1m/15m candles, futures balances and positions, order placement/query/cancellation, isolated margin and leverage, reduce-only closing, stop-loss orders, authentication examples, API permission requirements, and sandbox availability. Does futures API access require account approval or whitelisting?
+> My API restriction query succeeds and reports enableReading=true, enableFuturesTrading=true, enableSpotTrading=false, ipRestrict=true. The public futures getTime endpoint succeeds, but GET and JSON POST to /cfd/openApi/v1/prv/account return HTTP 403 HTML from my environment. Please confirm the current supported USDT perpetual API base URL and account-read endpoint, IP/access requirements, and provide the current full futures REST/WebSocket specification and sandbox access. I found the historical placeOrder example in lbank-connector-python 1.0.12. I need documented entry/exit enums, quantity units, position queries, order status/cancellation, isolated margin, leverage, native stop-loss and take-profit, reduce-only/OCO behavior, client-order-id reconciliation, authentication and rate limits. Does enabling Futures on my API key require a separate activation or whitelist for these endpoints?
 
-این متن آماده شده و برای هیچ‌کس ارسال نشده است. بعد از دسترسی به مشخصات معتبر، آداپتر مستقیم باید پیاده‌سازی و با پاسخ‌های نمونه و حساب مجاز تأیید شود. تا آن زمان وضعیت درست پروژه «زیرساخت آماده، اتصال معاملاتی LBank ناتمام» است.
-
-راهنمای `README_FA.md` جزئیات نصب زیرساخت، تلگرام، Gemini و فرمان‌ها را نگه می‌دارد؛ مثال‌های OKX آن متعلق به مسیر آزمایش‌شده قبلی‌اند و به معنی تکمیل خواسته LBank نیستند.
+تا وقتی خواندن حساب/پوزیشن و ثبت و بازیابی TP/SL قابل تأیید نباشند، اجرای واقعی LBank در کد بسته می‌ماند. تغییر `DRY_RUN=false` یا برداشتن قفل، جای پیاده‌سازی اتصال را نمی‌گیرد. شبیه‌ساز قبلی با داده قرارداد OKX قابل اجراست؛ آن را معامله LBank تلقی نکنید.
