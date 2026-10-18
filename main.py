@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 import time
@@ -20,6 +21,7 @@ from typing import Awaitable, Callable
 from ai_agent import AIAgent
 from config import Settings, load_settings
 from exchange_client import ExchangeClient
+from client_factory import build_client
 from indicators import MarketAnalyzer
 from instance_lock import instance_lock
 from risk_manager import RiskManager
@@ -51,12 +53,17 @@ class Orchestrator:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
         self.store = StateStore(settings.data_dir / "state.db")
-        self.client = ExchangeClient(settings)
+        self.client = build_client(settings)
         self.analyzer = MarketAnalyzer(self.client, settings)
         self.ai = AIAgent(settings, self.store, self.client)
         self.risk = RiskManager(settings, self.store, self.client)
         self.telegram = TelegramBot(settings, self.store)
-        self.trader = Trader(settings, self.client, self.risk, self.store, self.analyzer, self.telegram)
+        if settings.exchange_id == "gmx":
+            from gmx_trader import GmxTrader
+            trader_class = GmxTrader
+        else:
+            trader_class = Trader
+        self.trader = trader_class(settings, self.client, self.risk, self.store, self.analyzer, self.telegram)
         self.telegram.attach(self.trader, self.risk, self.ai, self.analyzer)
         self.stop_event = asyncio.Event()
         self._last_error_notify: dict[str, float] = {}
@@ -227,7 +234,7 @@ async def amain() -> None:
 
 
 def main() -> None:
-    if sys.platform.startswith("win"):
+    if sys.platform.startswith("win") and os.getenv('EXCHANGE_ID', 'gmx').lower() != 'gmx':
         # aiohttp/aiodns (used by ccxt) require the selector loop on Windows
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:

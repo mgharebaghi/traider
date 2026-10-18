@@ -185,11 +185,18 @@ class RiskManager:
             risk_budget = min(risk_budget, max(0, self.daily_loss_limit() + self.daily.realized_pnl))
         if risk_budget <= 0:
             return PositionPlan(False, "بودجه ضرر روزانه تمام شده است")
+        gmx = s.exchange_id == 'gmx'
+        fixed_cost = s.gmx_execution_budget_usd if gmx else 0.0
+        carry_rate = s.gmx_carry_budget_pct if gmx else 0.0
+        if risk_budget <= fixed_cost:
+            return PositionPlan(False, "بودجه ریسک از هزینه رزروشده اجرای GMX کمتر است؛ ورود اقتصادی نیست")
         # Conservative: assume taker fees on both legs + slippage on the stop fill.
         fee_in = s.taker_fee
         fee_out = s.taker_fee
-        loss_per_unit = dist + entry * fee_in + stop_loss * fee_out + stop_loss * s.slippage_pct
-        base_qty = risk_budget / loss_per_unit
+        loss_per_unit = dist + entry * fee_in + stop_loss * fee_out + stop_loss * s.slippage_pct + entry * carry_rate
+        if gmx:
+            loss_per_unit += 2 * entry * s.slippage_pct  # Market entry slippage and adverse entry impact.
+        base_qty = (risk_budget - fixed_cost) / loss_per_unit
         sl_pct = dist / entry
         if not s.min_sl_pct - 1e-9 <= sl_pct <= s.max_sl_pct + 1e-9:
             return PositionPlan(False, "فاصله حد ضرر خارج از بازه مجاز است")
@@ -233,8 +240,8 @@ class RiskManager:
         if self.client.min_cost and notional < self.client.min_cost:
             return PositionPlan(False, f"ارزش پوزیشن ({notional:.2f}$) کمتر از حداقل صرافی است")
         margin = notional / leverage
-        expected_fees = notional * fee_in + base_qty * stop_loss * fee_out
-        expected_loss = base_qty * loss_per_unit
+        expected_fees = notional * fee_in + base_qty * stop_loss * fee_out + fixed_cost + notional * carry_rate
+        expected_loss = base_qty * loss_per_unit + fixed_cost
         if expected_loss > risk_budget + 1e-9:
             return PositionPlan(False, "ریسک پس از گرد کردن حجم از سقف مجاز بیشتر شد")
         if margin > margin_budget + 1e-9 or margin + notional * fee_in > balance:
@@ -244,6 +251,16 @@ class RiskManager:
         rr_tp2 = d * (tp2 - entry) / dist
         if rr_tp2 < s.min_rr - 1e-6:
             return PositionPlan(False, f"نسبت ریسک به ریوارد ({rr_tp2:.2f}) کمتر از 1:{s.min_rr:g} است")
+        if gmx:
+            if margin < self.client.min_collateral:
+                return PositionPlan(False, "وثیقه محاسبه‌شده کمتر از حداقل زنده بازار GMX است")
+            # Check the partial-exit strategy as well as a complete TP2 exit.
+            target_price = s.tp1_close_fraction * tp1 + (1 - s.tp1_close_fraction) * tp2
+            gross_reward = base_qty * d * (target_price - entry)
+            target_cost = notional * fee_in + base_qty * target_price * fee_out + fixed_cost + notional * (carry_rate + 4 * s.slippage_pct)
+            net_reward = gross_reward - target_cost
+            if net_reward < s.gmx_min_net_reward_usd or net_reward / expected_loss < s.min_rr:
+                return PositionPlan(False, "سود هدف پس از کارمزد، اجرا، لغزش و ذخیره funding/borrowing برای ریسک خالص کافی نیست")
 
         liq = entry * (1 - d / leverage + d * s.maintenance_margin_rate)
         return PositionPlan(

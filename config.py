@@ -161,6 +161,15 @@ class Settings:
     ai_max_output_tokens: int = 4096
     max_trades_per_day: int = 4
     ai_quota_block_until: str = ""
+    gmx_chain_id: int = 42161
+    gmx_wallet_address: str = ""
+    gmx_private_key: str = ""
+    gmx_live_enabled: bool = False
+    gmx_execution_budget_usd: float = 3.00
+    gmx_carry_budget_pct: float = 0.001
+    gmx_min_net_reward_usd: float = 0.25
+    gmx_max_price_age_sec: int = 90
+    gmx_max_holding_minutes: int = 60
 
     # ---------------- Derived helpers ----------------
     @property
@@ -187,12 +196,12 @@ def load_settings() -> Settings:
         raise ValueError("TELEGRAM_ADMIN_CHAT_ID must be a numeric chat id") from exc
 
     settings = Settings(
-        exchange_id=_str("EXCHANGE_ID", "lbank").lower(),
+        exchange_id=_str("EXCHANGE_ID", "gmx").lower(),
         market_data_exchange_id=_str("MARKET_DATA_EXCHANGE_ID", "").lower(),
         api_key=_str("EXCHANGE_API_KEY"),
         api_secret=_str("EXCHANGE_API_SECRET"),
         api_password=_str("EXCHANGE_API_PASSWORD"),
-        symbol=_str("SYMBOL", "BTC/USDT:USDT"),
+        symbol=_str("SYMBOL", "BTC/USD [BTC-USDC]"),
         exchange_proxy=_str("EXCHANGE_PROXY_URL"),
         use_testnet=_bool("USE_TESTNET", False),
         tf_trend=_str("TF_TREND", "15m"),
@@ -227,11 +236,11 @@ def load_settings() -> Settings:
         tp1_close_fraction=_float("TP1_CLOSE_FRACTION", 0.5),
         min_sl_pct=_float("MIN_SL_PCT", 0.0012),
         max_sl_pct=_float("MAX_SL_PCT", 0.012),
-        maker_fee=_float("MAKER_FEE", 0.0002),
-        taker_fee=_float("TAKER_FEE", 0.0006),
+        maker_fee=_float("MAKER_FEE", 0.0007),
+        taker_fee=_float("TAKER_FEE", 0.0007),
         slippage_pct=_float("SLIPPAGE_PCT", 0.0002),
         breakeven_buffer_pct=_float("BREAKEVEN_BUFFER_PCT", 0.0),
-        entry_post_only=_bool("ENTRY_POST_ONLY", True),
+        entry_post_only=_bool("ENTRY_POST_ONLY", False),
         entry_timeout_min=_float("ENTRY_TIMEOUT_MIN", 5),
         max_entry_deviation_pct=_float("MAX_ENTRY_DEVIATION_PCT", 0.003),
         trailing_method=_str("TRAILING_METHOD", "hybrid").lower(),
@@ -262,6 +271,15 @@ def load_settings() -> Settings:
         ai_max_output_tokens=_int("AI_MAX_OUTPUT_TOKENS", 4096),
         max_trades_per_day=_int("MAX_TRADES_PER_DAY", 4),
         ai_quota_block_until=_str("AI_QUOTA_BLOCK_UNTIL"),
+        gmx_chain_id=_int("GMX_CHAIN_ID", 42161),
+        gmx_wallet_address=_str("GMX_WALLET_ADDRESS"),
+        gmx_private_key=_str("GMX_PRIVATE_KEY"),
+        gmx_live_enabled=_bool("GMX_LIVE_ENABLED", False),
+        gmx_execution_budget_usd=_float("GMX_EXECUTION_BUDGET_USD", 3.00),
+        gmx_carry_budget_pct=_float("GMX_CARRY_BUDGET_PCT", 0.001),
+        gmx_min_net_reward_usd=_float("GMX_MIN_NET_REWARD_USD", 0.25),
+        gmx_max_price_age_sec=_int("GMX_MAX_PRICE_AGE_SEC", 90),
+        gmx_max_holding_minutes=_int("GMX_MAX_HOLDING_MINUTES", 60),
     )
     _validate(settings)
     return settings
@@ -328,7 +346,20 @@ def _validate(s: Settings) -> None:
         errors.append("TP1_RR must be smaller than MIN_RR (TP2 R/R)")
     if s.trailing_method not in ("atr", "ema", "hybrid"):
         errors.append("TRAILING_METHOD must be one of: atr, ema, hybrid")
-    if not s.dry_run and not s.has_exchange_keys:
+    if s.exchange_id == "gmx":
+        if s.gmx_chain_id not in (42161, 43114):
+            errors.append("GMX_CHAIN_ID must be 42161 (Arbitrum) or 43114 (Avalanche)")
+        if s.market_data_exchange_id not in ("", "gmx"):
+            errors.append("GMX requires GMX market data; clear MARKET_DATA_EXCHANGE_ID")
+        if s.use_testnet or s.entry_post_only:
+            errors.append("GMX adapter uses mainnet Express orders; USE_TESTNET and ENTRY_POST_ONLY must be false")
+        if not s.symbol.endswith("USDC]"):
+            errors.append("GMX SYMBOL must be an exact USDC-collateral market symbol")
+        if min(s.gmx_execution_budget_usd, s.gmx_carry_budget_pct, s.gmx_min_net_reward_usd) < 0 or min(s.gmx_max_price_age_sec, s.gmx_max_holding_minutes) <= 0:
+            errors.append("Invalid GMX cost/freshness budgets")
+        if not s.dry_run and not (s.gmx_live_enabled and s.gmx_private_key and s.gmx_wallet_address):
+            errors.append("GMX LIVE requires GMX_LIVE_ENABLED, GMX_PRIVATE_KEY and GMX_WALLET_ADDRESS")
+    if not s.dry_run and s.exchange_id != "gmx" and not s.has_exchange_keys:
         errors.append("DRY_RUN=False requires EXCHANGE_API_KEY and EXCHANGE_API_SECRET")
     if not s.dry_run and s.exchange_id == "okx" and not s.api_password:
         errors.append("OKX live/demo execution requires EXCHANGE_API_PASSWORD (API passphrase)")

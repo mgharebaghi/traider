@@ -1,0 +1,7 @@
+{
+  "name": "gmx-gemini-trader",
+  "private": true,
+  "type": "module",
+  "scripts": { "check:gmx": "node gmx_bridge.mjs markets" },
+  "dependencies": { "@gmx-io/sdk": "2.3.1" }
+}

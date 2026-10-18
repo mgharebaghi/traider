@@ -70,7 +70,7 @@ class TradeSignal:
         return self.action in ("LONG", "SHORT")
 
 
-SYSTEM_INSTRUCTION = """You are an elite BTC perpetual-futures scalper and risk manager.
+SYSTEM_INSTRUCTION = """You are a cautious perpetual-futures analyst and risk manager.
 You receive a JSON market snapshot (15m trend structure + 1m entry data, EMA9/EMA26, RSI14, ATR14,
 support/resistance zones) and a technical pre-condition detected by a local algorithm.
 
@@ -79,18 +79,27 @@ Your job: decide whether to open a scalp NOW in the suggested direction, or WAIT
 Hard rules:
 1. Only trade WITH the 15m trend. If the pre-condition looks weak, late, or price is in the middle of
    nowhere, answer WAIT. Capital preservation beats activity.
-2. entry_price: a realistic LIMIT price very close to the current bid (LONG) or ask (SHORT),
+2. entry_price: a realistic reference entry close to the current oracle min/max,
    max 0.15% away from the current price.
 3. stop_loss: behind the nearest 1m/15m structure (swing low/high, S/R zone or EMA26) with an ATR buffer.
    Distance between entry and stop must be between {min_sl:.2f}% and {max_sl:.2f}% of price.
 4. take_profit_1 ≈ {tp1_rr:.1f}R (R = |entry - stop_loss|). take_profit_2 >= {min_rr:.1f}R and ideally at the
    next opposing S/R zone. For LONG: stop_loss < entry < tp1 < tp2. For SHORT: stop_loss > entry > tp1 > tp2.
-5. suggested_leverage: integer between {min_lev} and {max_lev}. Tighter stop => higher leverage is acceptable.
+5. suggested_leverage: integer between {min_lev} and {max_lev}. Do not raise leverage to recover losses.
 6. Round-trip fees are about {fees:.3f}% of notional — the move to TP1 must comfortably exceed fees.
 7. confidence: 0-100. Use >= {min_conf} only for genuinely high-probability setups.
 8. reasoning_fa: a precise, professional explanation IN PERSIAN (Farsi) of why you enter or wait,
    mentioning trend, pullback, RSI/momentum, the chosen S/R levels and invalidation. 3-6 sentences.
 9. If action is WAIT, still fill numeric fields with your best hypothetical levels (or current price).
+For GMX, min/max are oracle bounds, not an order book; there is no maker/post-only advantage.
+When a chart image is supplied, inspect candle structure, trend, RSI divergence, EMA,
+support/resistance and volatility together with the numerical data. Volume is unavailable;
+do not invent volume, order flow, news, funding observations or a guaranteed profitable day.
+Fixed execution and carrying reserves are additional to percentage fees. Reject marginal scalps.
+For GMX the configured MIN_RR must hold NET of costs for the weighted TP1/TP2 exit,
+not merely for the gross TP2 distance. A distant plausible structural target or WAIT
+is preferable to manufacturing levels to pass the risk filter.
+TP1/TP2 are exit recommendations from this analysis. Native SL/TP execution does not require another AI call.
 Return ONLY the JSON object matching the schema."""
 
 
@@ -196,10 +205,12 @@ class AIAgent:
             min_conf=self.s.ai_min_confidence,
         )
 
-    @staticmethod
-    def _user_prompt(snap: MarketSnapshot, setup: Setup) -> str:
+    def _user_prompt(self, snap: MarketSnapshot, setup: Setup) -> str:
         payload = {
-            "symbol": "BTC/USDT perpetual",
+            "symbol": self.s.symbol,
+            "exchange": self.s.exchange_id,
+            "cost_reserves": {"execution_usd": self.s.gmx_execution_budget_usd,
+                              "funding_borrowing_fraction": self.s.gmx_carry_budget_pct},
             "suggested_direction": setup.direction,
             "pre_condition_reasons": setup.reasons,
             "market": snap.to_prompt_dict(),
@@ -220,9 +231,14 @@ class AIAgent:
                 return None
             prompt = self._user_prompt(snap, setup)
             system = self._system_instruction()
+            contents = prompt
+            if self.s.exchange_id == 'gmx':
+                from chart_image import render_chart
+                png = render_chart(snap)
+                contents = [types.Part.from_text(text=prompt), types.Part.from_bytes(data=png, mime_type='image/png')]
             # UTF-8 bytes provide a conservative upper bound for text input tokens,
             # without a second countTokens API request. Reserve protocol overhead too.
-            tokens = len((system + prompt).encode("utf-8")) + 2048
+            tokens = len((system + prompt).encode("utf-8")) + (4096 if self.s.exchange_id == 'gmx' else 2048)
             usage = self._usage()
             reservations = [r for r in usage.get("reservations", []) if r[0] > time.time() - 60]
             if tokens + sum(r[1] for r in reservations) > self.s.ai_input_tokens_per_minute:
@@ -237,7 +253,7 @@ class AIAgent:
                 thinking = (types.ThinkingConfig(thinking_level="low")
                             if self.active_model.startswith(("gemini-3", "gemini-4")) else None)
                 response = await self._genai.aio.models.generate_content(
-                    model=self.active_model, contents=prompt,
+                    model=self.active_model, contents=contents,
                     config=types.GenerateContentConfig(
                         system_instruction=system, response_mime_type="application/json",
                         response_schema=GeminiSignal, temperature=self.s.ai_temperature,

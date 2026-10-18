@@ -52,7 +52,7 @@ BTN_PAUSE = "⏸ توقف"
 BTN_RESUME = "▶️ ادامه"
 BTN_PANIC = "🚨 بستن اضطراری"
 BTN_HISTORY = "📜 تاریخچه"
-BTN_GUIDE = "📘 راهنمای ترید مجازی"
+BTN_GUIDE = "📘 آموزش کامل GMX"
 
 CLOSE_REASONS = {
     "SL": "⛔ برخورد به حد ضرر (Stop Loss)",
@@ -132,7 +132,8 @@ class TelegramBot:
                 BotCommand("status", "وضعیت کامل کیف پول‌ها و پوزیشن"),
                 BotCommand("scan", "بررسی فوری بازار و استعلام جمینای"),
                 BotCommand("mode", "تغییر راحت بین پول مجازی و پول واقعی"),
-                BotCommand("guide", "راهنمای ساده معاملات آزمایشی"),
+                BotCommand("guide", "آموزش GMX از کیف پول تا معامله و برداشت"),
+                BotCommand("gmx", "وضعیت کیف پول و درخواست GMX"),
                 BotCommand("testdry", "آزمایش فنی سود و ضرر با قیمت نمونه"),
                 BotCommand("model", "انتخاب مدل هوش مصنوعی جمینای"),
                 BotCommand("pause", "توقف موقت اسکن بازار"),
@@ -188,6 +189,7 @@ class TelegramBot:
         add(CommandHandler("status", self.cmd_status, filters=admin))
         add(CommandHandler("scan", self.cmd_scan, filters=admin))
         add(CommandHandler("guide", self.cmd_guide, filters=admin))
+        add(CommandHandler("gmx", self.cmd_gmx, filters=admin))
         add(CommandHandler("testdry", self.cmd_testdry, filters=admin))
         add(CommandHandler("mode", self.cmd_mode, filters=admin))
         add(CommandHandler("model", self.cmd_model, filters=admin))
@@ -242,8 +244,8 @@ class TelegramBot:
             "🔍 <b>بررسی فوری بازار</b> (/scan) — تحلیل محلی قیمت زنده؛ دکمه استعلام جمنای سهمیه مصرف می‌کند\n"
             "🧪 <b>آزمایش فنی</b> (/testdry) — مشاهده یک سود و یک ضرر با قیمت نمونه، جدا از حساب شما\n"
             "🔁 <b>تغییر حالت</b> (/mode) — سوئیچ راحت بین <b>پول مجازی (شبیه‌ساز)</b> و <b>پول واقعی صرافی</b> بدون دست زدن به سرور\n"
-            "📘 <b>راهنمای ترید مجازی</b> (/guide) — توضیح کامل نحوه دیدن تریدهای مجازی و تغییر مبلغ شبیه‌ساز\n"
-            "🧠 <b>مدل هوش مصنوعی</b> (/model) — تغییر مدل جمینای (3.8 / 4 / 3.6 / 2.5)\n"
+            "📘 <b>آموزش کامل GMX</b> (/guide) — کیف پول، واریز، برداشت، هزینه‌ها، انواع سفارش و راه‌اندازی\n"
+            "🧠 <b>مدل هوش مصنوعی</b> (/model) — مدل پیش‌فرض Gemini 3.8 Flash\n"
             "📜 <b>تاریخچه</b> (/history) — کارنامه کامل تریدهای مجازی و واقعی با سود/ضرر دقیق\n"
             "⏸ <b>توقف</b> / ▶️ <b>ادامه</b> — توقف یا شروع مجدد اسکن خودکار بازار\n"
             "🚨 <b>بستن اضطراری</b> (/panic) — بستن آنی پوزیشن باز در هر شرایطی"
@@ -252,7 +254,7 @@ class TelegramBot:
             await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=self._keyboard())
 
     def _wallet_block(self, info: dict[str, Any]) -> list[str]:
-        """Builds a crystal-clear comparison of Virtual vs Real LBank wallets."""
+        """Compare virtual balance with the configured execution wallet."""
         mode = info.get("mode", "DRY")
         vbal = info.get("virtual_balance", self.s.starting_balance)
         real_fut = info.get("real_futures_balance")
@@ -267,7 +269,8 @@ class TelegramBot:
             f"• 🧪 <b>پول مجازی (شبیه‌ساز ربات):</b> <b>{usd(vbal)}</b>{active_tag_dry}",
         ]
         if real_fut is not None:
-            lines.append(f"• 🏦 <b>پول واقعی در صرافی (حساب Futures):</b> <b>{usd(real_fut)}</b>{active_tag_live}")
+            wallet_label = 'USDC آزاد کیف پول GMX' if self.s.exchange_id == 'gmx' else 'موجودی حساب Futures'
+            lines.append(f"• 🏦 <b>{wallet_label}:</b> <b>{usd(real_fut)}</b>{active_tag_live}")
             if real_spot is not None and real_spot != real_fut:
                 lines.append(f"• 🪙 <b>پول واقعی در صرافی (حساب Spot):</b> <b>{usd(real_spot)}</b>")
             if real_fut < min_bal:
@@ -279,7 +282,7 @@ class TelegramBot:
             if err:
                 lines.append("• 🏦 <b>موجودی واقعی:</b> قابل دریافت نیست؛ اتصال فیوچرز، مجوز API و پشتیبانی صرافی را بررسی کنید. این خطا به معنی صفر بودن موجودی نیست.")
             else:
-                lines.append("• 🏦 <b>پول واقعی در صرافی:</b> <i>کلید API تنظیم نشده است</i>")
+                lines.append("• 🏦 <b>پول واقعی:</b> <i>اتصال حساب/آدرس کیف پول تنظیم نشده است؛ /guide</i>")
         return lines
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -299,7 +302,7 @@ class TelegramBot:
             lines.append(f"✅ وضعیت اسکن بازار: <b>فعال (بررسی خودکار هر {self.s.scan_interval_sec} ثانیه)</b>")
 
         if info.get("price"):
-            lines.append(f"₿ قیمت زنده بیت‌کوین در منبع قیمت فعال: <b>{price_fmt(info['price'])} USDT</b>")
+            lines.append(f"₿ قیمت زنده در منبع قیمت فعال: <b>{price_fmt(info['price'])} USD</b>")
 
         lines.append("")
         lines.extend(self._wallet_block(info))
@@ -370,7 +373,7 @@ class TelegramBot:
         return "\n".join(rows)
 
     async def _build_scan_report(self) -> tuple[str, InlineKeyboardMarkup]:
-        """Runs an immediate market analysis on LBank 15m + 1m candles and formats a clear Persian report."""
+        """Build the current source's multi-timeframe market report."""
         assert self.analyzer and self.trader and self.ai
         snap = await self.analyzer.snapshot()
         setup = self.analyzer.detect_setup(snap)
@@ -391,7 +394,7 @@ class TelegramBot:
         lines = [
             "🔍 <b>گزارش بررسی لحظه‌ای بازار (زنده از منبع قیمت فعال)</b>",
             "",
-            f"₿ <b>قیمت لحظه‌ای بیت‌کوین:</b> <b>{price_fmt(snap.price)} USDT</b>",
+            f"₿ <b>قیمت لحظه‌ای:</b> <b>{price_fmt(snap.price)} USD</b>",
             f"⚙️ حالت فعال ربات: <b>{mode_label(self.trader.mode)}</b>",
             "",
             "📊 <b>تایم‌فریم ۱۵ دقیقه (تعیین روند اصلی):</b>",
@@ -461,6 +464,12 @@ class TelegramBot:
             await self._reply(update, f"❌ خطا در بررسی بازار: {esc(exc)}")
 
     async def cmd_guide(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if self.s.exchange_id == 'gmx':
+            from gmx_guide import LESSONS
+            key = context.args[0] if context.args else ''
+            text, keyboard = self._gmx_lesson(key)
+            await self._reply(update, text, keyboard)
+            return
         assert self.trader
         vbal = self.trader.virtual_balance
         text = (
@@ -502,12 +511,43 @@ class TelegramBot:
             lines = ["✅ <b>آزمایش فنی شبیه‌ساز موفق بود</b>",
                      "دو مسیر قیمت نمونه، جدا از موجودی و تاریخچه شما اجرا شد؛ این نتیجه پیش‌بینی بازار نیست."]
             for item in results:
-                lines.append(f"• {side_label(item['side'])}: نتیجه خالص {usd(item['net_pnl'], True)}؛ کارمزد {usd(item['fees'])}؛ موجودی نهایی از ۱۰۰ دلار: {usd(item['balance'])}")
+                lines.append(f"• {side_label(item['side'])}: نتیجه خالص {usd(item['net_pnl'], True)}؛ کارمزد {usd(item['fees'])}؛ موجودی نهایی از {usd(item['starting_balance'])}: {usd(item['balance'])}")
             lines.append("هیچ درخواست جمنای یا سفارش واقعی ارسال نشد. برای معاملات آزمایشی با قیمت زنده، حالت شبیه‌ساز و سپس «ادامه» را انتخاب کنید.")
             await self._reply(update, "\n".join(lines))
         except Exception as exc:
             log.exception("Paper engine check failed")
             await self._reply(update, f"⚠️ آزمایش فنی موفق نبود ({esc(type(exc).__name__)}). گزارش سرور را بررسی کنید.")
+
+    def _gmx_lesson(self, key=''):
+        from gmx_guide import LESSONS
+        if key in LESSONS:
+            title, body = LESSONS[key]
+            text = f'📘 <b>{esc(title)}</b>\n\n{esc(body)}'
+        else:
+            text = '📘 <b>آموزش GMX از صفر تا استفاده از ربات</b>\nموضوع را انتخاب کنید؛ هیچ آموزش یا دکمه‌ای به‌تنهایی پولی منتقل نمی‌کند.'
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(title, callback_data=f'guide:{k}')]
+            for k, (title, _) in LESSONS.items()])
+        return text, keyboard
+
+    async def cmd_gmx(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        assert self.trader
+        if self.s.exchange_id != 'gmx':
+            await self._reply(update, 'GMX در تنظیمات فعال نیست.')
+            return
+        lines = [f'GMX | chainId={self.s.gmx_chain_id}', f'بازار: {esc(self.s.symbol)}',
+                 f'کیف پول: <code>{esc(self.s.gmx_wallet_address or "تنظیم نشده")}</code>',
+                 f'مجوز امضای سرور: {"فعال" if self.s.gmx_live_enabled else "غیرفعال"}']
+        try:
+            account = await self.trader.client.account()
+            lines += [f'پوزیشن‌های کیف پول: {len(account["positions"])}', f'سفارش‌های کیف پول: {len(account["orders"])}',
+                      f'USDC بومی کیف پول: {usd(await self.trader.client.fetch_free_usdt())}']
+        except Exception:
+            lines.append('خواندن کیف پول ممکن نشد؛ آدرس، شبکه و اتصال API را بررسی کنید.')
+        journal = self.store.get('gmx_request')
+        if journal:
+            lines.append(f'درخواست در حال پیگیری: <code>{esc(journal["requestId"])}</code>')
+        lines.append('وضعیت قطعی و مجوز USDC و گس را در https://app.gmx.io تطبیق دهید. /guide')
+        await self._reply(update, '\n'.join(lines))
 
     async def cmd_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         assert self.trader
@@ -550,16 +590,6 @@ class TelegramBot:
             [
                 [
                     InlineKeyboardButton("⚡ Gemini 3.8 Flash (پیش‌فرض و سریع)", callback_data="model:gemini-3.8-flash"),
-                ],
-                [
-                    InlineKeyboardButton("🧠 Gemini 4 Argon (پرچم‌دار استدلالی)", callback_data="model:gemini-4-argon"),
-                ],
-                [
-                    InlineKeyboardButton("🚀 Gemini 3.6 Flash", callback_data="model:gemini-3.6-flash"),
-                    InlineKeyboardButton("🪶 Gemini 3.5 Flash-Lite", callback_data="model:gemini-3.5-flash-lite"),
-                ],
-                [
-                    InlineKeyboardButton("🔹 Gemini 2.5 Flash", callback_data="model:gemini-2.5-flash"),
                 ],
             ]
         )
@@ -642,7 +672,7 @@ class TelegramBot:
             f"(موجودی فعلی: <b>{usd(self.trader.virtual_balance)}</b>)"
         )
         lines.append(
-            f"💰 <b>مجموع کارنامه پول واقعی (LBank):</b> {summary_live['trades']} ترید | "
+            f"💰 <b>مجموع کارنامه پول واقعی:</b> {summary_live['trades']} ترید | "
             f"نرخ برد: <b>{summary_live['win_rate']:.0f}%</b> | سود/ضرر کل: <b>{usd(summary_live['net_pnl'], True)}</b>"
         )
         await self._reply(update, "\n".join(lines))
@@ -670,6 +700,9 @@ class TelegramBot:
 
     async def cmd_setkeys(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         assert self.trader
+        if self.s.exchange_id == 'gmx':
+            await self._reply(update, 'GMX کلید API صرافی ندارد. کلید خصوصی را در تلگرام نفرستید؛ فقط GMX_PRIVATE_KEY در تنظیمات محلی سرور. /guide live')
+            return
         if not context.args or len(context.args) < 2:
             await self._reply(
                 update,
@@ -700,6 +733,10 @@ class TelegramBot:
         await query.answer()
         data = query.data or ""
         assert self.trader and self.ai and self.risk
+        if data.startswith('guide:'):
+            text, keyboard = self._gmx_lesson(data.split(':', 1)[1])
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+            return
         if data == "mode:menu":
             info = await self.trader.status_snapshot()
             current = info["mode"]
@@ -740,7 +777,7 @@ class TelegramBot:
             )
             await query.edit_message_text(
                 "⚠️ <b>تأیید تغییر به حالت واقعی (LIVE)</b>\n"
-                "این حالت فقط برای آداپتور فیوچرز پشتیبانی‌شده قابل استفاده است. LBank در این نسخه پشتیبانی نمی‌شود. پس از تأیید اتصال، سفارش با پول واقعی ثبت خواهد شد.\n\n"
+                "در GMX، امضای محلی کیف پول و GMX_LIVE_ENABLED باید آماده باشد. پس از تأیید اتصال، سفارش با پول واقعی ثبت خواهد شد. /guide live\n\n"
                 "آیا ادامه می‌دهید؟",
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard,
@@ -842,7 +879,7 @@ class TelegramBot:
                 "🧠 <b>جواب بررسی هوش مصنوعی جمینای دریافت شد!</b>",
                 f"🕒 ساعت اعلام جواب: <b>{done_str}</b> | مدل: <code>{esc(self.ai.active_model)}</code>",
                 "",
-                f"₿ قیمت لحظه‌ای بازار: <b>{price_fmt(snap.price)} USDT</b>",
+                f"₿ قیمت لحظه‌ای بازار: <b>{price_fmt(snap.price)} USD</b>",
                 f"📣 <b>تصمیم جمینای: {verdict}</b>",
                 f"🎯 درجه اطمینان: <b>{signal.confidence}%</b> (حداقل لازم برای ترید: {self.s.ai_min_confidence}%)",
                 "",
@@ -932,7 +969,7 @@ class TelegramBot:
         lines.append(f"📡 منبع تحلیل و شبیه‌سازی: <b>{esc(self.trader.client.data_ex.id) if self.trader else '—'}</b>")
         lines.append("🧪 در حالت آزمایشی، ورود و خروج با قیمت زنده شبیه‌سازی می‌شود؛ سود و ضرر پس از کارمزد در تاریخچه ثبت می‌شود.")
         lines.append(f"🎟 حداکثر {self.s.max_trades_per_day} ورود در روز؛ ربات برای پر کردن تعداد، معامله نمی‌کند.")
-        lines.append("ℹ️ اجرای واقعی فیوچرز LBank در این نسخه آماده نیست. سود روزانه تضمینی نیست.")
+        lines.append("ℹ️ GMX: راهنمای واریز، برداشت و فعال‌سازی در /guide؛ سود روزانه تضمینی نیست.")
         lines.extend(self._wallet_block(info))
         lines += [
             "",
@@ -950,7 +987,7 @@ class TelegramBot:
             f"🕒 ساعت شروع بررسی: <b>{now_str}</b>",
             "",
             f"📍 جهت تشخیص داده‌شده: <b>{side_label(setup.direction)}</b>",
-            f"₿ قیمت لحظه‌ای بیت‌کوین در منبع قیمت فعال: <b>{price_fmt(snap.price)} USDT</b>",
+            f"₿ قیمت لحظه‌ای در منبع قیمت فعال: <b>{price_fmt(snap.price)} USD</b>",
             "🔎 <b>دلایل تکنیکال:</b>",
         ]
         for r in setup.reasons:
@@ -972,7 +1009,9 @@ class TelegramBot:
             f"💵 موجودی فعلی کیف پول فیوچرز: <b>{usd(balance)}</b>",
             f"⚠️ حداقل موجودی لازم برای شروع ترید: <b>{usd(min_required)}</b>",
         ]
-        if mode == "LIVE":
+        if mode == "LIVE" and self.s.exchange_id == 'gmx':
+            lines.append('\nبرای واریز USDC بومی و گس روی شبکه درست /guide deposit را بخوانید. حداقل حساب و بودجه اقتصادی معامله جداگانه بررسی می‌شوند.')
+        elif mode == "LIVE":
             if spot_balance and spot_balance > 0:
                 lines.append(
                     f"\n💡 <b>راهنمایی مهم:</b> در کیف پول <b>Spot (اسپات)</b> شما <b>{usd(spot_balance)}</b> تتر وجود دارد، "
@@ -993,6 +1032,9 @@ class TelegramBot:
         self, pos: "Position", plan: PositionPlan, signal: "TradeSignal", warnings: list[str]
     ) -> None:
         now_str = datetime.now(self.tz).strftime("%H:%M:%S")
+        live_gmx = self.s.exchange_id == 'gmx' and pos.mode == 'LIVE'
+        entry_label = 'قیمت مرجع Market Express' if live_gmx else 'قیمت ورود لیمیت'
+        tp1_label = 'TP1 پیشنهادی؛ بدون خروج جزئی خودکار' if live_gmx else 'TP1؛ خروج جزئی و کاهش ریسک'
         lines = [
             "✅ <b>جواب بررسی جمینای: تایید ورود! سفارش ثبت شد 🚀</b>",
             f"🕒 ساعت ثبت سفارش: <b>{now_str}</b>",
@@ -1001,15 +1043,15 @@ class TelegramBot:
             f"⚙️ کیف پول: <b>{mode_label(pos.mode)}</b>",
             f"🎯 اطمینان جمینای: <b>{signal.confidence}%</b>",
             "",
-            f"💲 قیمت ورود (لیمیت): <b>{price_fmt(pos.entry_price)}</b>",
+            f"💲 {entry_label}: <b>{price_fmt(pos.entry_price)}</b>",
             f"📦 حجم: <b>{pos.contracts:g}</b> قرارداد (≈ {pos.base_qty:.4f} BTC | ارزش کل ≈ {usd(plan.notional)})",
             f"⚡ لوریج: <b>{pos.leverage}x</b> (Isolated) | مارجین درگیر ≈ <b>{usd(plan.margin)}</b>",
             f"⛔ حد ضرر (SL): <b>{price_fmt(pos.stop_loss)}</b> ({plan.sl_pct * 100:.2f}%)",
-            f"✅ حد سود ۱ (TP1 - سیو ۵۰٪ و ریسک‌فری): <b>{price_fmt(pos.tp1)}</b> (R/R 1:{plan.rr_tp1:.1f})",
+            f"✅ {tp1_label}: <b>{price_fmt(pos.tp1)}</b> (R/R 1:{plan.rr_tp1:.1f})",
             f"🏆 حد سود ۲ (TP2 - هدف اصلی): <b>{price_fmt(pos.tp2)}</b> (R/R 1:{plan.rr_tp2:.1f})",
             f"💀 قیمت تقریبی لیکوئید: {price_fmt(plan.liquidation_price)}",
             "",
-            f"🔻 حداکثر ریسک دلاری این ترید (با کارمزد): <b>{usd(plan.expected_loss)}</b> از سقف {usd(plan.risk_budget)}",
+            f"🔻 زیان برآوردی این ترید (با هزینه‌ها): <b>{usd(plan.expected_loss)}</b> از بودجه {usd(plan.risk_budget)}؛ گپ/لغزش می‌تواند زیان را بیشتر کند.",
         ]
         if plan.risk_reduced:
             lines.append("ℹ️ به دلیل محدودیت مارجین/لوریج، حجم کمتر از سقف ریسک تنظیم شد.")
@@ -1020,7 +1062,10 @@ class TelegramBot:
             lines += ["", "🛠 <b>اصلاحات خودکار:</b>"] + [f"• {esc(a)}" for a in signal.adjustments]
         if warnings:
             lines += ["", "⚠️ <b>هشدارها:</b>"] + [f"• {esc(w)}" for w in warnings]
-        lines += ["", f"⏳ مهلت پر شدن سفارش ورود: {self.s.entry_timeout_min:g} دقیقه (به محض رسیدن قیمت، پیام شروع ترید ارسال می‌شود)"]
+        if live_gmx:
+            lines += ['', '⏳ درخواست ارسال شده؛ ورود فقط پس از اجرای GMX و مشاهده پوزیشن و حد ضرر تأیید می‌شود.']
+        else:
+            lines += ["", f"⏳ مهلت پر شدن سفارش ورود: {self.s.entry_timeout_min:g} دقیقه (به محض رسیدن قیمت، پیام شروع ترید ارسال می‌شود)"]
         await self.send("\n".join(lines))
 
     async def notify_entry_filled(self, pos: "Position") -> None:

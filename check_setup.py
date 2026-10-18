@@ -4,9 +4,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import os
 
 from config import load_settings
-from exchange_client import ExchangeClient
+from client_factory import build_client as ExchangeClient
 from indicators import MarketAnalyzer
 
 
@@ -58,7 +59,7 @@ def main() -> None:
     parser.add_argument("--network", action="store_true", help="Check public market data, bot identity and model access")
     parser.add_argument("--market-only", action="store_true", help="Check public perpetual candles and ticker only")
     args = parser.parse_args()
-    if sys.platform.startswith("win"):
+    if sys.platform.startswith("win") and os.getenv('EXCHANGE_ID', 'gmx').lower() != 'gmx':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
         settings = check_config()
