@@ -22,6 +22,7 @@ def usd30(value) -> float:
 class GmxClient:
     contract_size = 1.0
     min_amount = 0.0
+    bridge_timeout_sec = 55
 
     def __init__(self, settings):
         self.s = settings
@@ -29,6 +30,7 @@ class GmxClient:
         self.trade_ex = self.data_ex = SimpleNamespace(id=f"gmx:{settings.gmx_chain_id}")
         self.market = {}
         self._processes = set()
+        self._reads = {}
         self.market_values = {}
 
     @property
@@ -36,6 +38,23 @@ class GmxClient:
         return bool(self.s.gmx_wallet_address and self.s.gmx_private_key)
 
     async def rpc(self, op, **kwargs):
+        if op not in ('markets', 'tokens', 'ticker', 'candles'):
+            return await self._rpc_once(op, **kwargs)
+        # Scanner and manual scan can overlap; share only in-flight public reads.
+        key = json.dumps([op, kwargs], sort_keys=True)
+        task = self._reads.get(key)
+        if task is None:
+            task = asyncio.create_task(self._rpc_once(op, **kwargs))
+            self._reads[key] = task
+            def finished(done):
+                if self._reads.get(key) is done:
+                    self._reads.pop(key, None)
+                if not done.cancelled():
+                    done.exception()  # Observe failures even if the caller was cancelled.
+            task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def _rpc_once(self, op, **kwargs):
         env = dict(os.environ)
         env.pop('GMX_PRIVATE_KEY', None)
         env['GMX_LIVE_ENABLED'] = 'true' if self.s.gmx_live_enabled else 'false'
@@ -45,20 +64,38 @@ class GmxClient:
         proc = await asyncio.create_subprocess_exec(
             'node', str(Path(__file__).with_name('gmx_bridge.mjs')),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=env,
+            stderr=asyncio.subprocess.PIPE, env=env, limit=8 * 1024 * 1024,
         )
         self._processes.add(proc)
+        stderr_task = asyncio.create_task(proc.stderr.read())
         try:
             payload = json.dumps(dict(op=op, chainId=self.s.gmx_chain_id, **kwargs)).encode()
-            out, _ = await asyncio.wait_for(proc.communicate(payload), timeout=55)
-            response = json.loads(out)
-            if proc.returncode or not response.get('ok'):
+            async def read_response():
+                proc.stdin.write(payload)
+                await proc.stdin.drain()
+                proc.stdin.close()
+                return await proc.stdout.readline()
+            try:
+                out = await asyncio.wait_for(read_response(), timeout=self.bridge_timeout_sec)
+            except asyncio.TimeoutError:
+                raise TimeoutError(f'دریافت پاسخ GMX برای {op} در {self.bridge_timeout_sec:g} ثانیه تمام نشد؛ اتصال سرور به API را بررسی کنید. درخواست دوباره ارسال نشد.') from None
+            try:
+                response = json.loads(out)
+            except (ValueError, UnicodeDecodeError):
+                raise RuntimeError(f'GMX bridge returned no valid response for {op}; check Node and SDK installation') from None
+            if not response.get('ok'):
+                if op in ('markets', 'tokens', 'ticker', 'candles'):
+                    raise RuntimeError(f'دریافت داده عمومی GMX ({op}) ناموفق بود: {response.get("error", "NetworkError")}، HTTP={response.get("statusCode")}. اتصال شبکه یا پاسخ API مشکل دارد؛ این خطا به کیف پول یا Gemini مربوط نیست.')
                 raise RuntimeError(f"GMX {op} failed (HTTP={response.get('statusCode')}, code={response.get('code')}, fields={response.get('fields')}, detail={response.get('detail', '')}); check wallet, allowance, gas and API access")
             return response['result']
         finally:
             if proc.returncode is None:
-                proc.kill()
-                await proc.wait()
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            await proc.wait()
+            await asyncio.gather(stderr_task, return_exceptions=True)
             self._processes.discard(proc)
 
     async def initialize(self):
@@ -164,6 +201,10 @@ class GmxClient:
         return await self.rpc('submit', prepared=prepared, address=self.s.gmx_wallet_address)
 
     async def close(self):
+        reads = list(self._reads.values())
+        for task in reads:
+            task.cancel()
+        await asyncio.gather(*reads, return_exceptions=True)
         for proc in list(self._processes):
             if proc.returncode is None:
                 proc.kill()

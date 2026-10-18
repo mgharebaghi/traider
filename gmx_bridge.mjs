@@ -1,7 +1,10 @@
 // JSON-over-stdin boundary. Private keys never appear in arguments or output.
 import { createRequire } from 'node:module';
+import { setDefaultResultOrder } from 'node:dns';
+setDefaultResultOrder('ipv4first');
 const require = createRequire(import.meta.url);
-const { GmxApiSdk, PrivateKeySigner, parsePrepareOrderError } = require('@gmx-io/sdk/v2');
+const { GmxApiSdk, PrivateKeySigner, parsePrepareOrderError, HttpClientWithFallback } = require('@gmx-io/sdk/v2');
+const { getApiUrl } = require('@gmx-io/sdk/configs/api');
 const stringify = (v) => JSON.stringify(v, (_, x) => typeof x === 'bigint' ? x.toString() : x);
 const pack = (v) => JSON.stringify(v, (_, x) => typeof x === 'bigint' ? { $bigint: x.toString() } : x);
 const unpack = (v) => JSON.parse(v, (_, x) => x && typeof x === 'object' && '$bigint' in x ? BigInt(x.$bigint) : x);
@@ -13,9 +16,30 @@ try {
   operation = p.op;
   const chainId = Number(p.chainId ?? 42161);
   if (![42161, 43114].includes(chainId)) throw Error('Unsupported chain');
-  const sdk = new GmxApiSdk({ chainId });
+  // Only public market reads may rotate peers. Order prepare/submit/status stay
+  // on the SDK's original peer because transaction records are peer-specific.
+  const publicRead = ['markets', 'tokens', 'ticker', 'candles'].includes(p.op);
+  const primary = getApiUrl(chainId);
+  const sdk = new GmxApiSdk({ chainId, ...(publicRead ? {
+    api: new HttpClientWithFallback([primary, primary.replace('.gmxapi.io', '.gmxapi.ai')], 18000),
+  } : {}) });
   let result;
   switch (p.op) {
+    case 'probe': {
+      result = await Promise.all([primary, primary.replace('.gmxapi.io', '.gmxapi.ai')].map(async url => {
+        const started = Date.now();
+        try {
+          const rows = await new HttpClientWithFallback([url], 7000).fetchJson('/v1/prices/ohlcv', {
+            query: { symbol: p.symbol, timeframe: '1m', limit: 2 },
+          });
+          return { host: new URL(url).hostname, ok: Array.isArray(rows) && rows.length > 0, elapsedMs: Date.now() - started };
+        } catch (e) {
+          return { host: new URL(url).hostname, ok: false, elapsedMs: Date.now() - started,
+            error: e?.name ?? 'NetworkError', statusCode: e?.statusCode };
+        }
+      }));
+      break;
+    }
     case 'markets': result = await sdk.fetchMarkets(); break;
     case 'tokens': result = await sdk.fetchTokens(); break;
     case 'ticker': {
@@ -85,7 +109,7 @@ try {
     }
     default: throw Error('Unknown operation');
   }
-  process.stdout.write(stringify({ ok: true, result }));
+  process.stdout.write(stringify({ ok: true, result }) + '\n');
 } catch (error) {
   // SDK errors may contain signed payloads or URLs: expose only a safe class name.
   const parsed = parsePrepareOrderError(error);
@@ -93,6 +117,6 @@ try {
   const fields = parsed?.message && typeof parsed.message === 'object' ? Object.keys(parsed.message) : undefined;
   const detail = operation === 'prepare' && error?.statusCode === 400
     ? String(error?.body?.message ?? error?.body?.error ?? '').replace(/0x[a-fA-F0-9]+/g, '[hex]').slice(0, 300) : undefined;
-  process.stdout.write(JSON.stringify({ ok: false, error: error?.name ?? 'GMXError', statusCode: error?.statusCode, code, fields, detail }));
+  process.stdout.write(JSON.stringify({ ok: false, error: error?.name ?? 'GMXError', statusCode: error?.statusCode, code, fields, detail }) + '\n');
   process.exitCode = 1;
 }
