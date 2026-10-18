@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ from typing import Any
 class StateStore:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
@@ -51,6 +52,18 @@ class StateStore:
                 " closed_at TEXT,"
                 " payload TEXT)"
             )
+
+    @contextmanager
+    def transaction(self):
+        """Commit a settlement's ledger, counters and position deletion together."""
+        with self._lock:
+            self._conn.execute('BEGIN IMMEDIATE')
+            try:
+                yield
+                self._conn.execute('COMMIT')
+            except BaseException:
+                self._conn.execute('ROLLBACK')
+                raise
 
     # ------------------------------------------------------------------ kv
     def get(self, key: str, default: Any = None) -> Any:

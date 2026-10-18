@@ -20,7 +20,9 @@ from trader import Trader
 
 def settings_at(path, **changes):
     env = {"TELEGRAM_BOT_TOKEN": "123456:test-token", "TELEGRAM_ADMIN_CHAT_ID": "123456",
-           "GEMINI_API_KEY": "test-key", "DATA_DIR": str(path)}
+           "GEMINI_API_KEY": "test-key", "DATA_DIR": str(path), "EXCHANGE_ID": "okx",
+           "SYMBOL": "BTC/USDT:USDT", "MAKER_FEE": "0.0002", "TAKER_FEE": "0.0006",
+           "ENTRY_POST_ONLY": "true"}
     with patch.dict(os.environ, env, clear=True):
         return replace(load_settings(), **changes)
 
@@ -256,7 +258,7 @@ class ConfigAndAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             sample.update(TELEGRAM_BOT_TOKEN="123456:token", TELEGRAM_ADMIN_CHAT_ID="1", GEMINI_API_KEY="x", DATA_DIR=tmp)
             with patch.dict(os.environ, sample, clear=True):
-                self.assertEqual(load_settings().exchange_id, "lbank")
+                self.assertEqual(load_settings().exchange_id, "gmx")
 
     def test_instance_lock_prevents_second_process(self):
         from instance_lock import instance_lock
