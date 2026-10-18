@@ -9,11 +9,15 @@ from indicators import MarketAnalyzer
 from chart_image import render_chart
 
 
-async def check(quote=False):
+async def check(quote=False, peers=False):
     s = replace(load_settings(), dry_run=True, gmx_live_enabled=False, gmx_private_key='',
                 gmx_wallet_address='0x0000000000000000000000000000000000000001')
     client = GmxClient(s)
     try:
+        if peers:
+            for row in await client.rpc('probe', symbol=s.symbol):
+                print(f'{row["host"]}: {"OK" if row["ok"] else "FAILED"} | {row["elapsedMs"]}ms | HTTP={row.get("statusCode")} | {row.get("error", "")}')
+            return
         await client.initialize()
         snap = await MarketAnalyzer(client, s).snapshot()
         chart = render_chart(snap)
@@ -33,5 +37,6 @@ async def check(quote=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--quote', action='store_true')
+    parser.add_argument('--peers', action='store_true', help='Probe each public GMX host separately without wallet access')
     args = parser.parse_args()
-    asyncio.run(check(args.quote))
+    asyncio.run(check(args.quote, args.peers))
